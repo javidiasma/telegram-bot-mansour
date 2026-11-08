@@ -1,4 +1,5 @@
 """Building channel posts, posting them, deleting the previous one, and daily scheduling."""
+import html
 import logging
 from datetime import datetime, time, timedelta
 
@@ -7,10 +8,13 @@ from telegram.ext import Application, ContextTypes
 
 from . import config as cfg
 from .persian import fmt_num, jalali_date, to_fa
+from . import textrender
+from .flights_image import render_flights, status_fa
 from .sources import ikac, navasan
 
 log = logging.getLogger(__name__)
 JOB_PREFIX = "daily:"
+JOB_FA = {"dollar": "قیمت دلار", "flights": "پروازهای IKA", "songs": "آهنگ روز"}
 
 
 class JobError(Exception):
@@ -54,14 +58,25 @@ def _status_icon(status: str) -> str:
 
 
 def format_flights(flights: list[dict], now: datetime) -> str:
+    esc = html.escape
     head = [f"✈️ <b>پروازهای خروجی فرودگاه امام خمینی (IKA)</b>", f"📅 {jalali_date(now)}", ""]
+    if not flights:
+        return "\n".join(head) + "امروز پرواز خروجی ثبت نشده است." + _footer()
     body = []
     for f in flights[: cfg.FLIGHTS_MAX]:
-        parts = [f.get("time", ""), f.get("flight", ""), f.get("airline", ""), f.get("dest", "")]
-        line = " | ".join(p for p in parts if p)
+        t, sched = f.get("time", ""), f.get("scheduled", "")
+        when = f"<s>{esc(sched)}</s> {esc(t)}" if sched and t and sched != t else esc(t or sched)
+        main = " | ".join(esc(p) for p in (f.get("flight"), f.get("airline"), f.get("dest")) if p)
         status = f.get("status", "")
-        icon = _status_icon(status)
-        body.append(f"{icon} {line}" + (f" — {status}" if status else ""))
+        line = f"{_status_icon(status)} <b>{when}</b> | {main}"
+        extras = []
+        if status:
+            extras.append(esc(status_fa(status)))
+        if f.get("gate"):
+            extras.append(f"گیت {to_fa(esc(f['gate']))}")
+        if extras:
+            line += "\n      " + " · ".join(extras)
+        body.append(line)
     text = "\n".join(head + body)
     extra = len(flights) - len(body)
     while len(text) > 3900 and body:          # Telegram limit is 4096 chars
@@ -86,35 +101,51 @@ async def post_job(app: Application, name: str) -> str:
     if name == "dollar":
         rate = await navasan.fetch_rate(http, cfg.NAVASAN_ITEM, cfg.NAVASAN_API_KEY, cfg.NAVASAN_API_URL)
         msg = await bot.send_message(cfg.CHANNEL_ID, format_dollar(rate, now), parse_mode="HTML")
-        summary = f"Dollar rate posted: {rate.price:,.0f} toman"
+        summary = f"قیمت دلار ارسال شد: {fmt_num(rate.price)} تومان"
     elif name == "flights":
         flights = await ikac.fetch_departures(http, cfg.FLIGHTS_URL)
-        msg = await bot.send_message(cfg.CHANNEL_ID, format_flights(flights, now), parse_mode="HTML")
-        summary = f"Flights posted: {len(flights)} departures"
+        image = None
+        if cfg.FLIGHTS_STYLE == "image":
+            try:
+                bold = await textrender.ensure_font(http, cfg.DATA_DIR, textrender.font_urls("Bold", cfg.FONT_URL))
+                regular = await textrender.ensure_font(
+                    http, cfg.DATA_DIR, textrender.font_urls("Regular", cfg.FONT_REGULAR_URL)) or bold
+                if bold:
+                    image = render_flights(flights, now, bold, regular, cfg.SIGNATURE, cfg.FLIGHTS_MAX)
+                else:
+                    log.warning("Persian font could not be downloaded; sending flights as text")
+            except Exception:  # noqa: BLE001 – never lose the post because of a drawing problem
+                log.exception("flight image rendering failed; sending text instead")
+        if image:
+            caption = f"✈️ <b>پروازهای خروجی فرودگاه امام خمینی</b>\n📅 {jalali_date(now)}" + _footer()
+            msg = await bot.send_photo(cfg.CHANNEL_ID, image, caption=caption, parse_mode="HTML")
+        else:
+            msg = await bot.send_message(cfg.CHANNEL_ID, format_flights(flights, now), parse_mode="HTML")
+        summary = f"فهرست پروازها ارسال شد: {to_fa(len(flights))} پرواز خروجی"
     elif name == "songs":
         song = store.next_song()
         if not song:
-            raise JobError("No songs cached. Use 🎵 Songs → ➕ Add songs first.")
+            raise JobError("هیچ آهنگی ذخیره نشده است. اول از 🎵 آهنگ‌ها ← ➕ افزودن آهنگ، آهنگ اضافه کنید.")
         caption = cfg.SIGNATURE or None
         if song["kind"] == "audio":
             msg = await bot.send_audio(cfg.CHANNEL_ID, song["file_id"], caption=caption)
         else:
             msg = await bot.send_document(cfg.CHANNEL_ID, song["file_id"], caption=caption)
         store.mark_song_sent(song["id"])
-        summary = f"Song posted: {song['title'] or 'untitled'}"
+        summary = f"آهنگ ارسال شد: {song['title'] or 'بدون نام'}"
     else:
-        raise JobError(f"Unknown job {name}")
+        raise JobError(f"کار ناشناخته: {name}")
 
     prev = job.get("last_msg_id")
     store.update_job(name, last_msg_id=msg.message_id, last_sent_at=now.isoformat(timespec="minutes"))
     if job.get("delete_prev") and prev:
         try:
             await bot.delete_message(cfg.CHANNEL_ID, prev)
-            summary += " (previous post deleted)"
+            summary += " (پست قبلی حذف شد)"
         except TelegramError as e:
-            summary += f" (couldn't delete previous post: {e.message})"
+            summary += f" (حذف پست قبلی انجام نشد: {e.message})"
     if song is not None and store.songs_left_in_round() == store.song_count():
-        summary += "\nℹ️ Every cached song has now been played once; the list starts over tomorrow."
+        summary += "\nℹ️ همه آهنگ‌ها یک‌بار ارسال شدند؛ از فردا فهرست از اول تکرار می‌شود."
     return summary
 
 
@@ -136,9 +167,9 @@ async def _scheduled(context: ContextTypes.DEFAULT_TYPE) -> None:
         if not is_retry:
             context.job_queue.run_once(_scheduled, when=timedelta(minutes=5), data=(name, True),
                                        name=f"retry:{name}")
-            await notify_admins(context.application, f"⚠️ {name} failed: {e}\nRetrying in 5 minutes.")
+            await notify_admins(context.application, f"⚠️ ارسال «{JOB_FA[name]}» انجام نشد: {e}\n۵ دقیقه دیگر دوباره تلاش می‌کنم.")
         else:
-            await notify_admins(context.application, f"❌ {name} failed again: {e}")
+            await notify_admins(context.application, f"❌ ارسال «{JOB_FA[name]}» دوباره انجام نشد: {e}")
 
 
 # ------------------------------------------------------------------ scheduling
@@ -167,4 +198,6 @@ def next_run(app: Application, name: str) -> str:
     jobs = app.job_queue.get_jobs_by_name(JOB_PREFIX + name)
     if not jobs or not jobs[0].next_t:
         return "—"
-    return jobs[0].next_t.astimezone(cfg.TZ).strftime("%a %H:%M")
+    t = jobs[0].next_t.astimezone(cfg.TZ)
+    day = "امروز" if t.date() == datetime.now(cfg.TZ).date() else "فردا"
+    return f"{day} ساعت {to_fa(t.strftime('%H:%M'))}"

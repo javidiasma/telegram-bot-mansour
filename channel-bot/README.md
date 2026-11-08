@@ -78,9 +78,10 @@ Stop the Railway service while testing locally (same token).
   loads flights with JavaScript or blocks non-Iranian servers. Fixes: set `PROXY_URL` to an Iran-located HTTP proxy,
   or point `FLIGHTS_URL` to the page/endpoint that actually returns the flight list (see your browser's DevTools →
   Network tab). The site's robots rules discourage automated access, so check you're OK using its data.
-- **AI images** — free Pollinations by default (no key, slower, can be rate-limited). Set `OPENAI_API_KEY`
-  for OpenAI images. The AI only draws the background; the text is drawn by the bot with the Vazirmatn font
-  (downloaded on first use), so Persian text is always correct.
+- **AI images** — drawn by an OpenAI-compatible image API (GapGPT by default: `CHAT_API_BASE_URL`,
+  `CHAT_API_KEY`, and `IMAGE_MODEL` set to an image model from your GapGPT panel). The chat model (`CHAT_MODEL`)
+  first turns the admin's Persian text into an English prompt. The AI only draws the background; the text is
+  drawn by the bot with the Vazirmatn font (downloaded on first use), so Persian text is always correct.
 
 ## Project layout
 

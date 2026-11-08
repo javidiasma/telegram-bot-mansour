@@ -36,19 +36,27 @@ NAVASAN_API_URL = os.getenv("NAVASAN_API_URL", "http://api.navasan.tech/latest/"
 
 # IKA flights source
 FLIGHTS_URL = os.getenv("FLIGHTS_URL", "https://www.ikac.ir/en-US/airport.ikac/5257/page/Flights")
-FLIGHTS_MAX = int(os.getenv("FLIGHTS_MAX", "40"))
+FLIGHTS_MAX = int(os.getenv("FLIGHTS_MAX", "30"))
 
 # Optional HTTP proxy, e.g. http://user:pass@1.2.3.4:8080 (useful if an Iranian site blocks foreign servers)
 PROXY_URL = os.getenv("PROXY_URL") or None
 
-# AI image: uses OpenAI if OPENAI_API_KEY is set, otherwise the free Pollinations service
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
-POLLINATIONS_URL = os.getenv("POLLINATIONS_URL", "https://image.pollinations.ai/prompt/")
-FONT_URL = os.getenv(
-    "FONT_URL",
-    "https://raw.githubusercontent.com/rastikerdar/vazirmatn/master/fonts/ttf/Vazirmatn-Bold.ttf",
-)
+# AI image: any OpenAI-compatible /images/generations API (e.g. GapGPT). Falls back to the chat settings.
+IMAGE_API_BASE_URL = os.getenv("IMAGE_API_BASE_URL") or os.getenv("CHAT_API_BASE_URL") or "https://api.gapgpt.app/v1"
+IMAGE_API_KEY = os.getenv("IMAGE_API_KEY") or os.getenv("CHAT_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-1")
+
+# Optional OpenAI-compatible CHAT model that rewrites the admin's text into a better English image prompt.
+# Image generation itself still uses Pollinations/OpenAI above. Leave empty to skip this step.
+CHAT_API_BASE_URL = os.getenv("CHAT_API_BASE_URL", "")
+CHAT_API_KEY = os.getenv("CHAT_API_KEY", "")
+CHAT_MODEL = os.getenv("CHAT_MODEL", "")
+
+# Optional custom font URLs (a Persian .ttf). By default Vazirmatn is downloaded automatically.
+FONT_URL = os.getenv("FONT_URL", "")
+FONT_REGULAR_URL = os.getenv("FONT_REGULAR_URL", "")
+# "image" = designed flight-board picture, "text" = plain text message
+FLIGHTS_STYLE = os.getenv("FLIGHTS_STYLE", "image").lower()
 
 # Optional line added under every channel post, e.g. "@my_channel"
 SIGNATURE = os.getenv("SIGNATURE", "")

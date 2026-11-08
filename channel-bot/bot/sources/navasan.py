@@ -73,7 +73,7 @@ def parse_day_rates(html: str, item: str = "usd_sell") -> Rate:
                 price = _num(m.group(1))
                 break
     if price is None or price < 1000:
-        raise SourceError("Could not find the dollar price on navasan.net (page layout may have changed).")
+        raise SourceError("قیمت دلار در سایت navasan.net پیدا نشد (احتمالاً ساختار صفحه تغییر کرده است).")
 
     rate = Rate(title=ITEM_TITLES.get(item, item), price=price)
     # change % and update time usually sit right after the latest price
@@ -98,7 +98,7 @@ async def fetch_rate(client, item: str = "usd_sell", api_key: str = "", api_url:
         r.raise_for_status()
         data = r.json().get(item)
         if not data:
-            raise SourceError(f"Navasan API returned no '{item}' item.")
+            raise SourceError(f"وب‌سرویس نوسان مقداری برای «{item}» برنگرداند.")
         return Rate(
             title=ITEM_TITLES.get(item, item),
             price=_num(str(data["value"])),

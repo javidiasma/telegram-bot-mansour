@@ -1,4 +1,4 @@
-"""Admin panel: inline-button menus in the bot's private chat."""
+"""پنل مدیریت: منوهای دکمه‌ای در چت خصوصی ربات."""
 import html
 import logging
 import re
@@ -9,78 +9,84 @@ from telegram.ext import (Application, ApplicationHandlerStop, CallbackQueryHand
                           ContextTypes, MessageHandler, TypeHandler, filters)
 
 from . import config as cfg
-from . import imagegen
+from . import imagegen, textrender
 from .jobs import next_run, post_job, schedule_job
-from .persian import to_en
+from .persian import to_en, to_fa
 
 log = logging.getLogger(__name__)
 
-TITLES = {"dollar": "💵 Dollar rate", "flights": "✈️ IKA departures", "songs": "🎵 Song of the day"}
+TITLES = {"dollar": "💵 قیمت دلار", "flights": "✈️ پروازهای خروجی IKA", "songs": "🎵 آهنگ روز"}
 TIME_RE = re.compile(r"^\s*(\d{1,2})\s*[:.]\s*(\d{2})\s*$")
+MENU_TEXT = "پنل مدیریت — یکی از گزینه‌ها را انتخاب کنید:"
+
+
+def yes_no(v: bool) -> str:
+    return "بله" if v else "خیر"
 
 
 # ------------------------------------------------------------------ keyboards
 def main_menu() -> M:
     return M([
-        [B(TITLES["dollar"], callback_data="job:dollar"), B(TITLES["flights"], callback_data="job:flights")],
-        [B("🎵 Songs", callback_data="job:songs"), B("🎨 AI image", callback_data="ai:start")],
-        [B("📊 Status", callback_data="status")],
+        [B(TITLES["dollar"], callback_data="job:dollar"), B("✈️ پروازهای IKA", callback_data="job:flights")],
+        [B("🎵 آهنگ‌ها", callback_data="job:songs"), B("🎨 ساخت تصویر با هوش مصنوعی", callback_data="ai:start")],
+        [B("📊 وضعیت", callback_data="status")],
     ])
 
 
 def job_menu(store, name: str) -> M:
     job = store.job(name)
     rows = [
-        [B("🚀 Send now", callback_data=f"now:{name}"), B("⏰ Change time", callback_data=f"time:{name}")],
-        [B("✅ On" if job["enabled"] else "⛔ Off", callback_data=f"toggle:{name}"),
-         B(f"🗑 Delete previous: {'on' if job['delete_prev'] else 'off'}", callback_data=f"delprev:{name}")],
+        [B("🚀 ارسال همین حالا", callback_data=f"now:{name}"), B("⏰ تغییر ساعت", callback_data=f"time:{name}")],
+        [B("✅ روشن" if job["enabled"] else "⛔ خاموش", callback_data=f"toggle:{name}"),
+         B(f"🗑 حذف پست قبلی: {'روشن' if job['delete_prev'] else 'خاموش'}", callback_data=f"delprev:{name}")],
     ]
     if name == "songs":
-        rows.insert(0, [B("➕ Add songs", callback_data="songs:add"), B("📃 List", callback_data="songs:list")])
-        rows.append([B("🧹 Delete all songs", callback_data="songs:clear")])
-    rows.append([B("⬅️ Back", callback_data="menu")])
+        rows.insert(0, [B("➕ افزودن آهنگ", callback_data="songs:add"), B("📃 فهرست آهنگ‌ها", callback_data="songs:list")])
+        rows.append([B("🧹 حذف همه آهنگ‌ها", callback_data="songs:clear")])
+    rows.append([B("⬅️ بازگشت", callback_data="menu")])
     return M(rows)
 
 
 def job_text(app: Application, name: str) -> str:
     store = app.bot_data["store"]
     job = store.job(name)
+    last = job["last_sent_at"].replace("T", " ")[:16] if job["last_sent_at"] else "—"
     lines = [f"<b>{TITLES[name]}</b>",
-             f"Daily time: <b>{job['time']}</b> (Tehran)",
-             f"Status: {'✅ on' if job['enabled'] else '⛔ off'} · next run: {next_run(app, name)}",
-             f"Delete previous post: {'yes' if job['delete_prev'] else 'no'}",
-             f"Last sent: {job['last_sent_at'] or '—'}"]
+             f"ساعت ارسال روزانه: <b>{to_fa(job['time'])}</b> (به وقت تهران)",
+             f"وضعیت: {'✅ روشن' if job['enabled'] else '⛔ خاموش'} · اجرای بعدی: {next_run(app, name)}",
+             f"حذف پست قبلی: {yes_no(job['delete_prev'])}",
+             f"آخرین ارسال: {to_fa(last)}"]
     if name == "songs":
-        lines.append(f"Cached songs: <b>{store.song_count()}</b>")
+        lines.append(f"تعداد آهنگ‌های ذخیره‌شده: <b>{to_fa(store.song_count())}</b>")
     return "\n".join(lines)
 
 
 # ------------------------------------------------------------------ guards
 async def admin_only(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Runs before every handler; silently stops anything not from an admin in private chat."""
+    """قبل از همه هندلرها اجرا می‌شود؛ هر چیزی که از ادمین در چت خصوصی نباشد را متوقف می‌کند."""
     user, chat = update.effective_user, update.effective_chat
     if chat and chat.type == "private" and user and user.id in cfg.ADMIN_IDS:
         return
     if update.message and update.message.text and update.message.text.startswith("/id") and user:
-        await update.message.reply_text(f"Your Telegram user id: <code>{user.id}</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(f"شناسه تلگرام شما: <code>{user.id}</code>", parse_mode=ParseMode.HTML)
     elif update.message and chat and chat.type == "private":
-        await update.message.reply_text("This bot is private.")
+        await update.message.reply_text("این ربات خصوصی است.")
     raise ApplicationHandlerStop
 
 
 # ------------------------------------------------------------------ commands
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop("await", None)
-    await update.message.reply_text("Admin panel — choose an option:", reply_markup=main_menu())
+    await update.message.reply_text(MENU_TEXT, reply_markup=main_menu())
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop("await", None)
-    await update.message.reply_text("Cancelled.", reply_markup=main_menu())
+    await update.message.reply_text("لغو شد.", reply_markup=main_menu())
 
 
 async def show_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(f"Your Telegram user id: <code>{update.effective_user.id}</code>",
+    await update.message.reply_text(f"شناسه تلگرام شما: <code>{update.effective_user.id}</code>",
                                     parse_mode=ParseMode.HTML)
 
 
@@ -94,26 +100,27 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if action == "menu":
         context.user_data.pop("await", None)
-        await q.edit_message_text("Admin panel — choose an option:", reply_markup=main_menu())
+        await q.edit_message_text(MENU_TEXT, reply_markup=main_menu())
 
     elif action == "job":
         await q.edit_message_text(job_text(app, arg), parse_mode=ParseMode.HTML, reply_markup=job_menu(store, arg))
 
     elif action == "now":
-        await q.edit_message_text(f"⏳ Posting {TITLES[arg]}…")
+        await q.edit_message_text(f"⏳ در حال ارسال {TITLES[arg]}…")
         try:
-            result = "✅ " + await post_job(app, arg)
+            result = "✅ " + html.escape(await post_job(app, arg))
         except Exception as e:  # noqa: BLE001
             log.exception("manual %s failed", arg)
-            result = f"❌ Failed: {e}"
+            result = f"❌ ارسال انجام نشد: {html.escape(str(e))}"
         await q.edit_message_text(f"{result}\n\n{job_text(app, arg)}", parse_mode=ParseMode.HTML,
                                   reply_markup=job_menu(store, arg))
 
     elif action == "time":
         context.user_data["await"] = ("time", arg)
         await q.edit_message_text(
-            f"Send the new daily time for {TITLES[arg]} as <b>HH:MM</b> (24h, Tehran time), e.g. <code>09:30</code>.\n"
-            "Send /cancel to go back.", parse_mode=ParseMode.HTML)
+            f"ساعت جدید ارسال روزانه برای {TITLES[arg]} را به شکل <b>ساعت:دقیقه</b> بفرستید "
+            "(۲۴ ساعته، به وقت تهران). مثال: <code>09:30</code> یا <code>۲۱:۰۰</code>\n"
+            "برای انصراف /cancel را بفرستید.", parse_mode=ParseMode.HTML)
 
     elif action == "toggle":
         store.update_job(arg, enabled=not store.job(arg)["enabled"])
@@ -131,51 +138,54 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await ai_button(q, context, arg)
 
     elif action == "status":
-        parts = [f"Channel: <code>{html.escape(str(cfg.CHANNEL_ID))}</code>"]
+        parts = [f"کانال: <code>{html.escape(str(cfg.CHANNEL_ID))}</code>"]
         parts += [job_text(app, n) for n in ("dollar", "flights", "songs")]
-        ai = "OpenAI" if cfg.OPENAI_API_KEY else "Pollinations (free)"
-        parts.append(f"AI image provider: {ai}")
+        parts.append(f"سرویس ساخت تصویر: {html.escape(cfg.IMAGE_API_BASE_URL)} · مدل {html.escape(cfg.IMAGE_MODEL)}")
+        if cfg.CHAT_API_KEY:
+            parts.append(f"نوشتن توضیح تصویر با مدل: {html.escape(cfg.CHAT_MODEL)}")
         await q.edit_message_text("\n\n".join(parts), parse_mode=ParseMode.HTML,
-                                  reply_markup=M([[B("⬅️ Back", callback_data="menu")]]))
+                                  reply_markup=M([[B("⬅️ بازگشت", callback_data="menu")]]))
 
 
 # ------------------------------------------------------------------ songs
+DONE_BTN = M([[B("✅ تمام شد", callback_data="songs:done")]])
+
+
 async def songs_button(q, context, arg: str) -> None:
     store = context.application.bot_data["store"]
     if arg == "add":
         context.user_data["await"] = ("songs", 0)
         await q.edit_message_text(
-            "🎵 Send or forward as many songs as you like (audio files or music documents).\n"
-            "Each one is cached and will be posted one per day at the songs time.\n\n"
-            "Press <b>Done</b> when you're finished.", parse_mode=ParseMode.HTML,
-            reply_markup=M([[B("✅ Done", callback_data="songs:done")]]))
+            "🎵 هر تعداد آهنگ که می‌خواهید بفرستید یا فوروارد کنید (فایل صوتی یا فایل موسیقی).\n"
+            "همه ذخیره می‌شوند و هر روز در ساعت تعیین‌شده یکی از آن‌ها در کانال ارسال می‌شود.\n\n"
+            "وقتی تمام شد، دکمه <b>تمام شد</b> را بزنید.", parse_mode=ParseMode.HTML, reply_markup=DONE_BTN)
     elif arg == "done":
         added = context.user_data.pop("await", ("songs", 0))
         n = added[1] if added and added[0] == "songs" else 0
-        await q.edit_message_text(f"✅ Added {n} new song(s). Total cached: {store.song_count()}.\n\n"
+        await q.edit_message_text(f"✅ {to_fa(n)} آهنگ جدید اضافه شد. مجموع: {to_fa(store.song_count())}\n\n"
                                   + job_text(context.application, "songs"),
                                   parse_mode=ParseMode.HTML, reply_markup=job_menu(store, "songs"))
     elif arg == "list":
         songs = store.list_songs(40)
         if not songs:
-            text = "No songs cached yet."
+            text = "هنوز آهنگی ذخیره نشده است."
         else:
-            text = "\n".join(f"#{s['id']} · {html.escape(s['title'] or 'untitled')}"
+            text = "\n".join(f"#{s['id']} · {html.escape(s['title'] or 'بدون نام')}"
                              f"{' — ' + html.escape(s['performer']) if s['performer'] else ''}"
-                             f" · played {s['sent_count']}×" for s in songs)
+                             f" · {to_fa(s['sent_count'])} بار ارسال شده" for s in songs)
             more = store.song_count() - len(songs)
             if more > 0:
-                text += f"\n… and {more} more"
-            text += "\n\nTo remove one, send <code>/delsong ID</code>."
+                text += f"\n… و {to_fa(more)} آهنگ دیگر"
+            text += "\n\nبرای حذف یک آهنگ بفرستید: <code>/delsong شماره</code>\nمثال: <code>/delsong 5</code>"
         await q.edit_message_text(text, parse_mode=ParseMode.HTML,
-                                  reply_markup=M([[B("⬅️ Back", callback_data="job:songs")]]))
+                                  reply_markup=M([[B("⬅️ بازگشت", callback_data="job:songs")]]))
     elif arg == "clear":
-        await q.edit_message_text("Delete ALL cached songs? This can't be undone.",
-                                  reply_markup=M([[B("🧹 Yes, delete all", callback_data="songs:clear_yes"),
-                                                   B("Cancel", callback_data="job:songs")]]))
+        await q.edit_message_text("همه آهنگ‌های ذخیره‌شده حذف شوند؟ این کار برگشت‌پذیر نیست.",
+                                  reply_markup=M([[B("🧹 بله، همه حذف شوند", callback_data="songs:clear_yes"),
+                                                   B("انصراف", callback_data="job:songs")]]))
     elif arg == "clear_yes":
         n = store.clear_songs()
-        await q.edit_message_text(f"Deleted {n} song(s).\n\n" + job_text(context.application, "songs"),
+        await q.edit_message_text(f"{to_fa(n)} آهنگ حذف شد.\n\n" + job_text(context.application, "songs"),
                                   parse_mode=ParseMode.HTML, reply_markup=job_menu(store, "songs"))
 
 
@@ -192,18 +202,19 @@ async def on_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     state = context.user_data.get("await")
     if is_new and state and state[0] == "songs":
         context.user_data["await"] = ("songs", state[1] + 1)
-    note = "✅ Cached" if is_new else "ℹ️ Already cached"
-    await msg.reply_text(f"{note}: {title or 'untitled'} (total {store.song_count()})",
-                         reply_markup=M([[B("✅ Done", callback_data="songs:done")]]))
+    note = "✅ ذخیره شد" if is_new else "ℹ️ این آهنگ قبلاً ذخیره شده"
+    await msg.reply_text(f"{note}: {title or 'بدون نام'} (مجموع: {to_fa(store.song_count())})",
+                         reply_markup=DONE_BTN)
 
 
 async def del_song(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     store = context.application.bot_data["store"]
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /delsong ID (see 📃 List)")
+    arg = to_en(context.args[0]) if context.args else ""
+    if not arg.isdigit():
+        await update.message.reply_text("روش استفاده: /delsong شماره‌آهنگ (شماره را از 📃 فهرست آهنگ‌ها ببینید)")
         return
-    ok = store.delete_song(int(context.args[0]))
-    await update.message.reply_text("Deleted." if ok else "No song with that id.")
+    ok = store.delete_song(int(arg))
+    await update.message.reply_text("حذف شد." if ok else "آهنگی با این شماره پیدا نشد.")
 
 
 # ------------------------------------------------------------------ AI image
@@ -211,31 +222,31 @@ async def ai_button(q, context, arg: str) -> None:
     app = context.application
     if arg == "start":
         context.user_data["await"] = ("ai_text",)
-        await q.edit_message_text("🎨 Send the text to write on the image (Persian or English).\n"
-                                  "Use new lines for line breaks. /cancel to go back.")
+        await q.edit_message_text("🎨 متنی را که می‌خواهید روی تصویر نوشته شود بفرستید (فارسی یا انگلیسی).\n"
+                                  "برای رفتن به خط بعد، Enter بزنید. برای انصراف /cancel را بفرستید.")
     elif arg == "skip":
         context.user_data.pop("await", None)
-        await q.edit_message_text("⏳ Generating image… (can take up to a minute)")
+        await q.edit_message_text("⏳ در حال ساخت تصویر… (ممکن است تا یک دقیقه طول بکشد)")
         await make_and_preview(q.message.chat_id, context, None)
     elif arg == "retry":
         ai = context.user_data.get("ai")
         if not ai:
-            await q.message.reply_text("Nothing to regenerate. Start again from 🎨 AI image.")
+            await q.message.reply_text("چیزی برای ساخت دوباره نیست. از 🎨 ساخت تصویر دوباره شروع کنید.")
             return
-        await q.message.reply_text("⏳ Generating another version…")
+        await q.message.reply_text("⏳ در حال ساخت یک نسخه دیگر…")
         await make_and_preview(q.message.chat_id, context, ai.get("description"))
     elif arg == "post":
         ai = context.user_data.get("ai")
         if not ai or not ai.get("file_id"):
-            await q.message.reply_text("Nothing to post.")
+            await q.message.reply_text("تصویری برای ارسال وجود ندارد.")
             return
         await app.bot.send_photo(cfg.CHANNEL_ID, ai["file_id"], caption=cfg.SIGNATURE or None)
         await q.edit_message_reply_markup(None)
-        await q.message.reply_text("✅ Posted to the channel.", reply_markup=main_menu())
+        await q.message.reply_text("✅ در کانال ارسال شد.", reply_markup=main_menu())
     elif arg == "cancel":
         context.user_data.pop("ai", None)
         await q.edit_message_reply_markup(None)
-        await q.message.reply_text("Discarded.", reply_markup=main_menu())
+        await q.message.reply_text("کنار گذاشته شد.", reply_markup=main_menu())
 
 
 async def make_and_preview(chat_id: int, context: ContextTypes.DEFAULT_TYPE, description: str | None) -> None:
@@ -244,21 +255,25 @@ async def make_and_preview(chat_id: int, context: ContextTypes.DEFAULT_TYPE, des
     ai["description"] = description
     http = app.bot_data["http"]
     try:
-        prompt = imagegen.build_prompt(ai["text"], description)
-        bg = await imagegen.generate_background(http, prompt, cfg.OPENAI_API_KEY, cfg.OPENAI_IMAGE_MODEL,
-                                                cfg.POLLINATIONS_URL)
-        font = await imagegen.ensure_font(http, cfg.DATA_DIR, cfg.FONT_URL)
+        better = await imagegen.write_prompt(http, cfg.CHAT_API_BASE_URL, cfg.CHAT_API_KEY, cfg.CHAT_MODEL,
+                                             ai["text"], description)
+        prompt = imagegen.build_prompt(ai["text"], better or description)
+        bg = await imagegen.generate_background(http, prompt, cfg.IMAGE_API_BASE_URL, cfg.IMAGE_API_KEY,
+                                                cfg.IMAGE_MODEL)
+        font = await textrender.ensure_font(http, cfg.DATA_DIR, textrender.font_urls("Bold", cfg.FONT_URL))
+        if not font:
+            raise RuntimeError("فونت فارسی دانلود نشد؛ لطفاً بعداً دوباره امتحان کنید.")
         data = imagegen.render_text(bg, ai["text"], font)
     except Exception as e:  # noqa: BLE001
         log.exception("image generation failed")
-        await app.bot.send_message(chat_id, f"❌ Image generation failed: {e}",
-                                   reply_markup=M([[B("🔄 Try again", callback_data="ai:retry")],
-                                                   [B("⬅️ Menu", callback_data="menu")]]))
+        await app.bot.send_message(chat_id, f"❌ ساخت تصویر انجام نشد: {e}",
+                                   reply_markup=M([[B("🔄 تلاش دوباره", callback_data="ai:retry")],
+                                                   [B("⬅️ منو", callback_data="menu")]]))
         return
     sent = await app.bot.send_photo(
-        chat_id, data, caption="Preview — post it to the channel?",
-        reply_markup=M([[B("📤 Post to channel", callback_data="ai:post")],
-                        [B("🔄 Regenerate", callback_data="ai:retry"), B("❌ Cancel", callback_data="ai:cancel")]]))
+        chat_id, data, caption="پیش‌نمایش — در کانال ارسال شود؟",
+        reply_markup=M([[B("📤 ارسال در کانال", callback_data="ai:post")],
+                        [B("🔄 ساخت دوباره", callback_data="ai:retry"), B("❌ انصراف", callback_data="ai:cancel")]]))
     ai["file_id"] = sent.photo[-1].file_id
 
 
@@ -270,20 +285,20 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     store = app.bot_data["store"]
 
     if not state:
-        await update.message.reply_text("Choose an option:", reply_markup=main_menu())
+        await update.message.reply_text(MENU_TEXT, reply_markup=main_menu())
         return
 
     if state[0] == "time":
         name = state[1]
         m = TIME_RE.match(to_en(text))
         if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
-            await update.message.reply_text("Please send a valid time like 08:00 or 21:30 (or /cancel).")
+            await update.message.reply_text("لطفاً یک ساعت درست بفرستید، مثل 08:00 یا 21:30 (یا /cancel).")
             return
         value = f"{int(m.group(1)):02d}:{m.group(2)}"
         store.update_job(name, time=value, enabled=True)
         schedule_job(app, name)
         context.user_data.pop("await", None)
-        await update.message.reply_text(f"✅ {TITLES[name]} will be posted daily at {value} (Tehran).\n\n"
+        await update.message.reply_text(f"✅ {TITLES[name]} هر روز ساعت {to_fa(value)} (به وقت تهران) ارسال می‌شود.\n\n"
                                          + job_text(app, name), parse_mode=ParseMode.HTML,
                                          reply_markup=job_menu(store, name))
 
@@ -291,18 +306,18 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data["ai"] = {"text": text[:400]}
         context.user_data["await"] = ("ai_prompt",)
         await update.message.reply_text(
-            "Now describe the background picture (English works best), e.g. "
-            "<i>Tehran skyline at sunset, watercolor</i>.\nOr press Skip to let the AI pick one from your text.",
-            parse_mode=ParseMode.HTML, reply_markup=M([[B("⏭ Skip", callback_data="ai:skip")]]))
+            "حالا تصویر پس‌زمینه را توصیف کنید (توضیح به انگلیسی نتیجه بهتری می‌دهد)، مثلاً:\n"
+            "<i>Tehran skyline at sunset, watercolor</i>\n"
+            "یا دکمه «رد شدن» را بزنید تا هوش مصنوعی از روی متن شما تصویر بسازد.",
+            parse_mode=ParseMode.HTML, reply_markup=M([[B("⏭ رد شدن", callback_data="ai:skip")]]))
 
     elif state[0] == "ai_prompt":
         context.user_data.pop("await", None)
-        await update.message.reply_text("⏳ Generating image… (can take up to a minute)")
+        await update.message.reply_text("⏳ در حال ساخت تصویر… (ممکن است تا یک دقیقه طول بکشد)")
         await make_and_preview(update.effective_chat.id, context, text[:500])
 
     elif state[0] == "songs":
-        await update.message.reply_text("Send audio files, or press Done.",
-                                        reply_markup=M([[B("✅ Done", callback_data="songs:done")]]))
+        await update.message.reply_text("فایل صوتی بفرستید، یا دکمه «تمام شد» را بزنید.", reply_markup=DONE_BTN)
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

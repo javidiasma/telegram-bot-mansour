@@ -5,23 +5,54 @@ draws the admin's text on top with a real Persian font (Vazirmatn).
 """
 import base64
 import io
-import random
-import re
-from pathlib import Path
-from urllib.parse import quote
+import logging
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
+
+from . import textrender as tr
 
 SIZE = 1080
-RTL = re.compile(r"[֐-ࣿיִ-﷿ﹰ-﻿]")
-FALLBACK_FONTS = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf",
-]
+log = logging.getLogger(__name__)
 
 
 class ImageError(Exception):
     pass
+
+
+# ---------------------------------------------------------------- optional prompt writer (chat model)
+PROMPT_SYSTEM = (
+    "You write prompts for an AI image generator. The user gives the text that will be printed on a "
+    "picture (often Persian) and optionally an idea for the background. Reply with ONE English prompt, "
+    "at most 60 words, describing only the background scene: subject, mood, style, lighting and colors. "
+    "Never ask for any text, letters, words or logos in the image. Reply with the prompt only."
+)
+
+
+async def write_prompt(client, base_url: str, api_key: str, model: str,
+                       text: str, description: str | None) -> str | None:
+    """Uses an OpenAI-compatible chat model to turn the admin's (Persian) input into a good English
+    image prompt. Returns None on any failure so the caller can fall back to the plain prompt."""
+    if not (base_url and api_key and model):
+        return None
+    try:
+        r = await client.post(
+            base_url.rstrip("/") + "/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"model": model, "max_tokens": 200, "temperature": 0.7, "messages": [
+                {"role": "system", "content": PROMPT_SYSTEM},
+                {"role": "user", "content": f"Text on the image: {text}\n"
+                                            f"Background idea: {description or '(none, choose something fitting)'}"},
+            ]},
+            timeout=60,
+        )
+        if r.status_code != 200:
+            log.warning("prompt writer returned %s: %s", r.status_code, r.text[:200])
+            return None
+        content = r.json()["choices"][0]["message"]["content"].strip().strip('"')
+        return content[:600] or None
+    except Exception:  # noqa: BLE001
+        log.exception("prompt writer failed")
+        return None
 
 
 # ---------------------------------------------------------------- AI background
@@ -31,73 +62,37 @@ def build_prompt(text: str, description: str | None) -> str:
             "in the lower half. Absolutely no text, no letters, no words, no watermark, no logo.")
 
 
-async def generate_background(client, prompt: str, openai_key: str = "", openai_model: str = "gpt-image-1",
-                              pollinations_url: str = "https://image.pollinations.ai/prompt/") -> bytes:
-    if openai_key:
-        r = await client.post(
-            "https://api.openai.com/v1/images/generations",
-            headers={"Authorization": f"Bearer {openai_key}"},
-            json={"model": openai_model, "prompt": prompt, "size": "1024x1024", "n": 1},
-            timeout=180,
-        )
-        if r.status_code >= 400:
-            raise ImageError(f"OpenAI error {r.status_code}: {r.text[:300]}")
+async def generate_background(client, prompt: str, base_url: str, api_key: str, model: str) -> bytes:
+    """Calls an OpenAI-compatible /images/generations endpoint (GapGPT, OpenAI, ...)."""
+    if not (base_url and api_key and model):
+        raise ImageError("سرویس ساخت تصویر تنظیم نشده است (IMAGE_API_BASE_URL / IMAGE_API_KEY / IMAGE_MODEL).")
+    r = await client.post(
+        base_url.rstrip("/") + "/images/generations",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={"model": model, "prompt": prompt, "size": "1024x1024", "n": 1},
+        timeout=180,
+    )
+    if r.status_code >= 400:
+        raise ImageError(f"خطای سرویس تصویر ({r.status_code}): {r.text[:300]}")
+    try:
         item = r.json()["data"][0]
-        if item.get("b64_json"):
-            return base64.b64decode(item["b64_json"])
+    except Exception as e:  # noqa: BLE001
+        raise ImageError(f"پاسخ نامعتبر از سرویس تصویر: {r.text[:300]}") from e
+    if item.get("b64_json"):
+        return base64.b64decode(item["b64_json"])
+    if item.get("url"):
         img = await client.get(item["url"], timeout=120)
         img.raise_for_status()
         return img.content
-
-    url = pollinations_url + quote(prompt)
-    r = await client.get(
-        url,
-        params={"width": SIZE, "height": SIZE, "nologo": "true", "seed": random.randint(1, 10**9)},
-        timeout=180,
-    )
-    if r.status_code >= 400 or not r.headers.get("content-type", "").startswith("image"):
-        raise ImageError(f"Image service error {r.status_code}")
-    return r.content
+    raise ImageError("سرویس تصویر هیچ تصویری برنگرداند.")
 
 
-# ---------------------------------------------------------------- font
-async def ensure_font(client, data_dir: Path, font_url: str) -> str | None:
-    path = data_dir / "fonts" / "Vazirmatn-Bold.ttf"
-    if path.exists() and path.stat().st_size > 10_000:
-        return str(path)
-    try:
-        r = await client.get(font_url, timeout=60)
-        r.raise_for_status()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(r.content)
-        return str(path)
-    except Exception:
-        return next((p for p in FALLBACK_FONTS if Path(p).exists()), None)
-
-
-def _load_font(font_path: str | None, size: int):
-    if font_path:
-        try:
-            return ImageFont.truetype(font_path, size, layout_engine=ImageFont.Layout.BASIC)
-        except OSError:
-            pass
-    return ImageFont.load_default(size)
-
-
-# ---------------------------------------------------------------- text rendering
 def _shape(line: str) -> str:
-    """Join Persian letters and put them in visual (right-to-left) order."""
-    if not RTL.search(line):
-        return line
-    try:
-        import arabic_reshaper
-        try:
-            from bidi import get_display          # python-bidi >= 0.5
-        except ImportError:
-            from bidi.algorithm import get_display
-    except ImportError:
-        return line
-    return get_display(arabic_reshaper.reshape(line))
+    return tr.shape(line)
+
+
+def _load_font(font_path, size):
+    return tr.load_font(font_path, size)
 
 
 def _wrap(text: str, font, draw, max_w: int) -> list[str]:

@@ -26,12 +26,12 @@ async def on_startup(app: Application) -> None:
     )
     schedule_all(app)
     await app.bot.set_my_commands([
-        BotCommand("start", "Open the admin panel"),
-        BotCommand("cancel", "Cancel the current step"),
-        BotCommand("id", "Show your Telegram user id"),
+        BotCommand("start", "باز کردن پنل مدیریت"),
+        BotCommand("cancel", "لغو مرحله فعلی"),
+        BotCommand("id", "نمایش شناسه تلگرام شما"),
     ])
     log.info("Bot started; channel=%s admins=%s", cfg.CHANNEL_ID, cfg.ADMIN_IDS)
-    await notify_admins(app, "🤖 Bot started. Send /start for the admin panel.")
+    await notify_admins(app, "🤖 ربات روشن شد. برای باز کردن پنل مدیریت /start را بفرستید.")
 
 
 async def on_shutdown(app: Application) -> None:
@@ -45,6 +45,10 @@ def main() -> None:
     app = (Application.builder()
            .token(cfg.BOT_TOKEN)
            .defaults(Defaults(tzinfo=cfg.TZ))
+           # generous timeouts: slow or VPN connections to Telegram otherwise fail with "Timed out"
+           .connect_timeout(30).read_timeout(30).write_timeout(60).pool_timeout(30)
+           .media_write_timeout(120)
+           .get_updates_connect_timeout(30).get_updates_read_timeout(40).get_updates_pool_timeout(30)
            .post_init(on_startup)
            .post_shutdown(on_shutdown)
            .build())
