@@ -88,7 +88,7 @@ Stop the Railway service while testing locally (same token).
 Anyone who isn't in `ADMIN_IDS` gets a welcome message (`WELCOME_TEXT`) and a
 **✈️ پروازهای خروجی امروز IKA** button. It sends the same flights image the channel gets. One fetch is
 reused for `USER_FLIGHTS_CACHE_MIN` minutes (default 10), so many users don't hit ikac.ir each time.
-Users must be members of the channel first. Non-members get `JOIN_TEXT` with a join button and a
+Users must be members of the channel first. Non-members get the join message (editable in the admin panel → 📝 پیام عضویت کانال; `JOIN_TEXT` is the default) with a join button and a
 **✅ دنبال کردم** button that re-checks membership (the bot must be a channel admin for this check).
 Users only see `/start` in the command menu; admins still see the admin commands.
 

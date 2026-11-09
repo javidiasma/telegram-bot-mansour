@@ -32,7 +32,7 @@ def main_menu() -> M:
     return M([
         [B(TITLES["dollar"], callback_data="job:dollar"), B("✈️ پروازهای IKA", callback_data="job:flights")],
         [B("🎵 آهنگ‌ها", callback_data="job:songs"), B("🎨 ساخت تصویر با هوش مصنوعی", callback_data="ai:start")],
-        [B("📊 وضعیت", callback_data="status")],
+        [B("📝 پیام عضویت کانال", callback_data="jointext:show"), B("📊 وضعیت", callback_data="status")],
     ])
 
 
@@ -132,7 +132,8 @@ async def join_gate_markup(context: ContextTypes.DEFAULT_TYPE) -> M:
 
 
 async def send_join_gate(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await context.application.bot.send_message(chat_id, cfg.JOIN_TEXT, reply_markup=await join_gate_markup(context))
+    text = current_join_text(context.application.bot_data["store"])
+    await context.application.bot.send_message(chat_id, text, reply_markup=await join_gate_markup(context))
 
 
 async def user_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -257,6 +258,9 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     elif action == "ai":
         await ai_button(q, context, arg)
 
+    elif action == "jointext":
+        await jointext_button(q, context, arg)
+
     elif action == "status":
         parts = [f"کانال: <code>{html.escape(str(cfg.CHANNEL_ID))}</code>"]
         parts += [job_text(app, n) for n in ("dollar", "flights", "songs")]
@@ -265,6 +269,37 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             parts.append(f"نوشتن توضیح تصویر با مدل: {html.escape(cfg.CHAT_MODEL)}")
         await q.edit_message_text("\n\n".join(parts), parse_mode=ParseMode.HTML,
                                   reply_markup=M([[B("⬅️ بازگشت", callback_data="menu")]]))
+
+
+# ------------------------------------------------------------------ join-channel message (admin)
+def current_join_text(store) -> str:
+    return store.get("join_text") or cfg.JOIN_TEXT
+
+
+def jointext_screen(store) -> tuple[str, M]:
+    custom = bool(store.get("join_text"))
+    text = ("📝 <b>پیام عضویت کانال</b>\n"
+            "این پیام به کاربرانی نشان داده می‌شود که هنوز عضو کانال نیستند "
+            "(زیر آن دکمه‌های «عضویت در کانال» و «دنبال کردم» می‌آید).\n\n"
+            f"متن فعلی{'' if custom else ' (پیش‌فرض)'}:\n"
+            f"<blockquote>{html.escape(current_join_text(store))}</blockquote>")
+    rows = [[B("✏️ تغییر متن", callback_data="jointext:edit")]]
+    if custom:
+        rows.append([B("↩️ برگشت به متن پیش‌فرض", callback_data="jointext:reset")])
+    rows.append([B("⬅️ بازگشت", callback_data="menu")])
+    return text, M(rows)
+
+
+async def jointext_button(q, context, arg: str) -> None:
+    store = context.application.bot_data["store"]
+    if arg == "edit":
+        context.user_data["await"] = ("join_text",)
+        await q.edit_message_text("متن جدید پیام عضویت را بفرستید.\nبرای انصراف /cancel را بفرستید.")
+        return
+    if arg == "reset":
+        store.set("join_text", None)
+    text, kb = jointext_screen(store)
+    await q.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
 # ------------------------------------------------------------------ songs
@@ -438,6 +473,17 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     elif state[0] == "songs":
         await update.message.reply_text("فایل صوتی بفرستید، یا دکمه «تمام شد» را بزنید.", reply_markup=DONE_BTN)
+
+    elif state[0] == "join_text":
+        value = text.strip()[:1000]
+        if not value:
+            await update.message.reply_text("متن خالی است؛ دوباره بفرستید یا /cancel.")
+            return
+        store.set("join_text", value)
+        context.user_data.pop("await", None)
+        screen, kb = jointext_screen(store)
+        await update.message.reply_text("✅ پیام عضویت ذخیره شد.\n\n" + screen, parse_mode=ParseMode.HTML,
+                                        reply_markup=kb)
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
