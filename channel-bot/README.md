@@ -83,13 +83,20 @@ Stop the Railway service while testing locally (same token).
   first turns the admin's Persian text into an English prompt. The AI only draws the background; the text is
   drawn by the bot with the Vazirmatn font (downloaded on first use), so Persian text is always correct.
 
+## Normal users
+
+Anyone who isn't in `ADMIN_IDS` gets a welcome message (`WELCOME_TEXT`) and a
+**✈️ پروازهای خروجی امروز IKA** button. It sends the same flights image the channel gets. One fetch is
+reused for `USER_FLIGHTS_CACHE_MIN` minutes (default 10), so many users don't hit ikac.ir each time.
+Users only see `/start` in the command menu; admins still see the admin commands.
+
 ## Project layout
 
 ```
 bot/
   __main__.py      start-up, polling, scheduling on boot
   config.py        environment variables
-  handlers.py      admin panel (buttons, time input, songs, AI flow)
+  handlers.py      admin panel (buttons, time input, songs, AI flow) + normal-user menu
   jobs.py          building posts, posting, deleting previous post, daily schedule, retries
   storage.py       SQLite: settings, last message ids, song cache
   imagegen.py      AI background + Persian text overlay

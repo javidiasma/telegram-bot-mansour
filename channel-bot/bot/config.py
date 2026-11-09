@@ -61,6 +61,16 @@ FLIGHTS_STYLE = os.getenv("FLIGHTS_STYLE", "image").lower()
 # Optional line added under every channel post, e.g. "@my_channel"
 SIGNATURE = os.getenv("SIGNATURE", "")
 
+# ---- normal (non-admin) users
+# Welcome message shown to users on /start. Use \n for a new line.
+WELCOME_TEXT = os.getenv("WELCOME_TEXT", "").replace("\\n", "\n") or (
+    "سلام {name} 👋\n"
+    "من کارمند هوشمند منصورتراولز هستم. چطور می‌تونم کمکت کنم؟\n\n"
+    "برای دیدن پروازهای خروجی امروز فرودگاه امام خمینی، دکمه پایین را بزن 👇"
+)
+# How long (minutes) one fetch of the flights list is reused for users, so many clicks don't hit ikac.ir each time
+USER_FLIGHTS_CACHE_MIN = int(os.getenv("USER_FLIGHTS_CACHE_MIN", "10"))
+
 
 def validate() -> None:
     missing = [n for n, v in (("BOT_TOKEN", BOT_TOKEN), ("ADMIN_IDS", ADMIN_IDS), ("CHANNEL_ID", CHANNEL_ID)) if not v]

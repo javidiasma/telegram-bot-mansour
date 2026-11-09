@@ -1,16 +1,19 @@
 """پنل مدیریت: منوهای دکمه‌ای در چت خصوصی ربات."""
+import asyncio
 import html
 import logging
 import re
+import time
+from datetime import datetime
 
-from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup as M, Update
-from telegram.constants import ParseMode
+from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup as M, ReplyKeyboardMarkup, Update
+from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, TypeHandler, filters)
 
 from . import config as cfg
 from . import imagegen, textrender
-from .jobs import next_run, post_job, schedule_job
+from .jobs import build_flights, next_run, post_job, schedule_job
 from .persian import to_en, to_fa
 
 log = logging.getLogger(__name__)
@@ -63,15 +66,76 @@ def job_text(app: Application, name: str) -> str:
 
 # ------------------------------------------------------------------ guards
 async def admin_only(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """قبل از همه هندلرها اجرا می‌شود؛ هر چیزی که از ادمین در چت خصوصی نباشد را متوقف می‌کند."""
+    """قبل از همه هندلرها اجرا می‌شود. ادمین در چت خصوصی به پنل مدیریت می‌رود؛
+    کاربر عادی در چت خصوصی منوی کاربران را می‌بیند؛ بقیه (گروه، کانال و ...) نادیده گرفته می‌شوند."""
     user, chat = update.effective_user, update.effective_chat
     if chat and chat.type == "private" and user and user.id in cfg.ADMIN_IDS:
         return
-    if update.message and update.message.text and update.message.text.startswith("/id") and user:
-        await update.message.reply_text(f"شناسه تلگرام شما: <code>{user.id}</code>", parse_mode=ParseMode.HTML)
-    elif update.message and chat and chat.type == "private":
-        await update.message.reply_text("این ربات خصوصی است.")
+    if chat and chat.type == "private" and user:
+        try:
+            await user_router(update, context)
+        except Exception:  # noqa: BLE001
+            log.exception("user handler failed")
     raise ApplicationHandlerStop
+
+
+# ------------------------------------------------------------------ normal users
+USER_FLIGHTS_BTN = "✈️ پروازهای خروجی امروز IKA"
+
+
+def user_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([[USER_FLIGHTS_BTN]], resize_keyboard=True, is_persistent=True)
+
+
+def welcome_text(user) -> str:
+    return cfg.WELCOME_TEXT.replace("{name}", user.first_name or "")
+
+
+async def user_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg, user = update.message, update.effective_user
+    if update.callback_query:          # e.g. an old admin button pressed by someone who is no longer admin
+        await update.callback_query.answer()
+        return
+    if not msg:
+        return
+    text = (msg.text or "").strip()
+    if text.startswith("/id"):
+        await msg.reply_text(f"شناسه تلگرام شما: <code>{user.id}</code>", parse_mode=ParseMode.HTML)
+    elif text == USER_FLIGHTS_BTN or text.startswith("/flights"):
+        await send_user_flights(msg.chat_id, context)
+    else:                              # /start and anything else → welcome
+        await msg.reply_text(welcome_text(user), reply_markup=user_keyboard())
+
+
+async def _user_flights_post(app: Application) -> dict:
+    """همان پست کانال را می‌سازد و چند دقیقه نگه می‌دارد تا هر کلیک کاربر به ikac.ir درخواست نفرستد."""
+    lock = app.bot_data.setdefault("user_flights_lock", asyncio.Lock())
+    async with lock:                   # many users clicking at once → only one fetch
+        cached = app.bot_data.get("user_flights")
+        if cached and time.monotonic() - cached["at"] < cfg.USER_FLIGHTS_CACHE_MIN * 60:
+            return cached
+        image, text, _ = await build_flights(app, datetime.now(cfg.TZ))
+        cached = {"at": time.monotonic(), "image": image, "photo_id": None, "text": text}
+        app.bot_data["user_flights"] = cached
+        return cached
+
+
+async def send_user_flights(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+    app = context.application
+    await app.bot.send_chat_action(chat_id, ChatAction.UPLOAD_PHOTO)
+    try:
+        post = await _user_flights_post(app)
+    except Exception:  # noqa: BLE001
+        log.exception("user flights fetch failed")
+        await app.bot.send_message(chat_id, "متأسفانه الان دریافت فهرست پروازها ممکن نشد. چند دقیقه دیگر دوباره امتحان کنید 🙏",
+                                   reply_markup=user_keyboard())
+        return
+    if post["image"] or post["photo_id"]:
+        sent = await app.bot.send_photo(chat_id, post["photo_id"] or post["image"], caption=post["text"],
+                                        parse_mode=ParseMode.HTML, reply_markup=user_keyboard())
+        post["photo_id"] = sent.photo[-1].file_id   # later clicks reuse the uploaded photo
+    else:
+        await app.bot.send_message(chat_id, post["text"], parse_mode=ParseMode.HTML, reply_markup=user_keyboard())
 
 
 # ------------------------------------------------------------------ commands

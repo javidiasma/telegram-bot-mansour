@@ -2,7 +2,8 @@
 import logging
 
 import httpx
-from telegram import BotCommand, Update
+from telegram import BotCommand, BotCommandScopeChat, Update
+from telegram.error import TelegramError
 from telegram.ext import Application, Defaults
 
 from . import config as cfg
@@ -25,11 +26,17 @@ async def on_startup(app: Application) -> None:
         headers={"User-Agent": BROWSER_UA, "Accept-Language": "fa-IR,fa;q=0.9,en;q=0.8"},
     )
     schedule_all(app)
-    await app.bot.set_my_commands([
-        BotCommand("start", "باز کردن پنل مدیریت"),
-        BotCommand("cancel", "لغو مرحله فعلی"),
-        BotCommand("id", "نمایش شناسه تلگرام شما"),
-    ])
+    # normal users only see /start; each admin sees the admin commands in their own chat
+    await app.bot.set_my_commands([BotCommand("start", "شروع")])
+    for admin in cfg.ADMIN_IDS:
+        try:
+            await app.bot.set_my_commands([
+                BotCommand("start", "باز کردن پنل مدیریت"),
+                BotCommand("cancel", "لغو مرحله فعلی"),
+                BotCommand("id", "نمایش شناسه تلگرام شما"),
+            ], scope=BotCommandScopeChat(admin))
+        except TelegramError:   # admin hasn't started the bot yet
+            log.warning("Could not set commands for admin %s", admin)
     log.info("Bot started; channel=%s admins=%s", cfg.CHANNEL_ID, cfg.ADMIN_IDS)
     await notify_admins(app, "🤖 ربات روشن شد. برای باز کردن پنل مدیریت /start را بفرستید.")
 

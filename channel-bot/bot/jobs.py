@@ -88,6 +88,29 @@ def format_flights(flights: list[dict], now: datetime) -> str:
     return text + "\n\nمنبع: ikac.ir" + _footer()
 
 
+# ------------------------------------------------------------------ flights (shared by channel post and users)
+async def build_flights(app: Application, now: datetime) -> tuple[bytes | None, str, int]:
+    """Fetches IKA departures and builds the post exactly as it goes to the channel.
+
+    Returns (image, text, count): with an image, `text` is its caption; without one, `text` is the full message.
+    """
+    http = app.bot_data["http"]
+    flights = await ikac.fetch_departures(http, cfg.FLIGHTS_URL)
+    if cfg.FLIGHTS_STYLE == "image":
+        try:
+            bold = await textrender.ensure_font(http, cfg.DATA_DIR, textrender.font_urls("Bold", cfg.FONT_URL))
+            regular = await textrender.ensure_font(
+                http, cfg.DATA_DIR, textrender.font_urls("Regular", cfg.FONT_REGULAR_URL)) or bold
+            if bold:
+                image = render_flights(flights, now, bold, regular, cfg.SIGNATURE, cfg.FLIGHTS_MAX)
+                caption = f"✈️ <b>پروازهای خروجی فرودگاه امام خمینی</b>\n📅 {jalali_date(now)}" + _footer()
+                return image, caption, len(flights)
+            log.warning("Persian font could not be downloaded; sending flights as text")
+        except Exception:  # noqa: BLE001 – never lose the post because of a drawing problem
+            log.exception("flight image rendering failed; sending text instead")
+    return None, format_flights(flights, now), len(flights)
+
+
 # ------------------------------------------------------------------ posting
 async def post_job(app: Application, name: str) -> str:
     """Posts one job to the channel. Returns a short summary for the admin."""
@@ -103,25 +126,12 @@ async def post_job(app: Application, name: str) -> str:
         msg = await bot.send_message(cfg.CHANNEL_ID, format_dollar(rate, now), parse_mode="HTML")
         summary = f"قیمت دلار ارسال شد: {fmt_num(rate.price)} تومان"
     elif name == "flights":
-        flights = await ikac.fetch_departures(http, cfg.FLIGHTS_URL)
-        image = None
-        if cfg.FLIGHTS_STYLE == "image":
-            try:
-                bold = await textrender.ensure_font(http, cfg.DATA_DIR, textrender.font_urls("Bold", cfg.FONT_URL))
-                regular = await textrender.ensure_font(
-                    http, cfg.DATA_DIR, textrender.font_urls("Regular", cfg.FONT_REGULAR_URL)) or bold
-                if bold:
-                    image = render_flights(flights, now, bold, regular, cfg.SIGNATURE, cfg.FLIGHTS_MAX)
-                else:
-                    log.warning("Persian font could not be downloaded; sending flights as text")
-            except Exception:  # noqa: BLE001 – never lose the post because of a drawing problem
-                log.exception("flight image rendering failed; sending text instead")
+        image, text, count = await build_flights(app, now)
         if image:
-            caption = f"✈️ <b>پروازهای خروجی فرودگاه امام خمینی</b>\n📅 {jalali_date(now)}" + _footer()
-            msg = await bot.send_photo(cfg.CHANNEL_ID, image, caption=caption, parse_mode="HTML")
+            msg = await bot.send_photo(cfg.CHANNEL_ID, image, caption=text, parse_mode="HTML")
         else:
-            msg = await bot.send_message(cfg.CHANNEL_ID, format_flights(flights, now), parse_mode="HTML")
-        summary = f"فهرست پروازها ارسال شد: {to_fa(len(flights))} پرواز خروجی"
+            msg = await bot.send_message(cfg.CHANNEL_ID, text, parse_mode="HTML")
+        summary = f"فهرست پروازها ارسال شد: {to_fa(count)} پرواز خروجی"
     elif name == "songs":
         song = store.next_song()
         if not song:
