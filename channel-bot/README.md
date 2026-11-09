@@ -5,7 +5,7 @@ A Telegram bot that runs your channel on autopilot, managed from a button menu i
 | Feature | What it does |
 |---|---|
 | 💵 Dollar rate | Posts the Tehran free-market dollar price from navasan.net every day at the time you choose, then deletes yesterday's post. |
-| ✈️ IKA departures | Posts today's departing flights from ikac.ir every day at your time, then deletes the previous post. |
+| ✈️ IKA departures | Posts upcoming departing flights (from Flightradar24) every day at your time, then deletes the previous post. |
 | 🎨 AI image | You send a text, AI paints a background, the bot writes your text on it (Persian supported) and shows a preview → post / regenerate / cancel. |
 | 🎵 Song of the day | Send or forward many songs; the bot caches them and posts one per day at your time, cycling through all of them. |
 
@@ -73,6 +73,9 @@ Stop the Railway service while testing locally (same token).
 - **navasan.net** — the home page HTML holds placeholder numbers that JavaScript replaces, so the bot reads
   `dayRates.php?item=usd_sell`, which has the real prices. If you buy an official key at navasan.net/api,
   set `NAVASAN_API_KEY` and the bot uses the API instead (more reliable).
+- **Flightradar24** — ikac.ir doesn't answer servers outside Iran, so flights now come from
+  Flightradar24's internal airport feed (not an official public API, so it may change or block without notice).
+  The ikac.ir call is kept commented out in `jobs.build_flights`.
 - **ikac.ir** — the page couldn't be inspected in advance, so the parser looks for a table with flight/destination
   columns (English or Persian headers). If **Send now** reports *"No departures table found"*, the page either
   loads flights with JavaScript or blocks non-Iranian servers. Fixes: set `PROXY_URL` to an Iran-located HTTP proxy,
@@ -87,7 +90,7 @@ Stop the Railway service while testing locally (same token).
 
 Anyone who isn't in `ADMIN_IDS` gets a welcome message (`WELCOME_TEXT`) and a
 **✈️ پروازهای خروجی امروز IKA** button. It sends the same flights image the channel gets. One fetch is
-reused for `USER_FLIGHTS_CACHE_MIN` minutes (default 10), so many users don't hit ikac.ir each time.
+reused for `USER_FLIGHTS_CACHE_MIN` minutes (default 10), so many users don't hit the flights source each time.
 Users must be members of the channel first. Non-members get the join message (editable in the admin panel → 📝 پیام عضویت کانال; `JOIN_TEXT` is the default) with a join button and a
 **✅ دنبال کردم** button that re-checks membership (the bot must be a channel admin for this check).
 Users only see `/start` in the command menu; admins still see the admin commands.
@@ -104,5 +107,6 @@ bot/
   imagegen.py      AI background + Persian text overlay
   persian.py       Persian digits & Jalali date
   sources/navasan.py   dollar rate
-  sources/ikac.py      IKA departures
+  sources/fr24.py      IKA departures from Flightradar24 (active)
+  sources/ikac.py      IKA departures from ikac.ir (kept; its call is commented out in jobs.py)
 ```

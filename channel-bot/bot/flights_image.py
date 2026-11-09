@@ -30,6 +30,7 @@ STATUS_FA = [
     ("boarding", "در حال سوار شدن"), ("gate closed", "گیت بسته شد"), ("gate open", "گیت باز است"),
     ("check-in now", "در حال پذیرش"), ("check-in closed", "پذیرش بسته شد"),
     ("wait for announce", "منتظر اعلام بعدی"), ("delayed", "تأخیر"), ("on time", "به‌موقع"),
+    ("scheduled", "طبق برنامه"), ("diverted", "تغییر مسیر"),
 ]
 
 TERMINALS = {"one": "۱", "1": "۱", "two": "۲", "2": "۲", "salam": "سلام"}
@@ -75,7 +76,7 @@ def _fit(d, text, font, max_w):
 
 
 def render_flights(flights: list[dict], now: datetime, bold_font: str | None, regular_font: str | None,
-                   signature: str = "", max_rows: int = 30) -> bytes:
+                   signature: str = "", max_rows: int = 30, source: str = "ikac.ir") -> bytes:
     rows = flights[:max_rows]
     extra = len(flights) - len(rows)
     body_h = max(1, len(rows)) * ROW_H
@@ -168,7 +169,7 @@ def render_flights(flights: list[dict], now: datetime, bold_font: str | None, re
     # ---- footer
     fy = HEADER_H + COLHEAD_H + body_h
     d.rectangle((0, fy, W, H), fill=(10, 16, 28))
-    tr.draw(d, (W - M, fy + 34), "منبع: ikac.ir", f_foot, MUTED, "right")
+    tr.draw(d, (W - M, fy + 34), f"منبع: {source}", f_foot, MUTED, "right")
     if signature:
         tr.draw(d, (M, fy + 34), signature, f_foot, ACCENT, "left")
     if extra > 0:

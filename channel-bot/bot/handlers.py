@@ -165,7 +165,7 @@ async def user_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def _user_flights_post(app: Application) -> dict:
-    """همان پست کانال را می‌سازد و چند دقیقه نگه می‌دارد تا هر کلیک کاربر به ikac.ir درخواست نفرستد."""
+    """همان پست کانال را می‌سازد و چند دقیقه نگه می‌دارد تا هر کلیک کاربر به منبع پروازها درخواست نفرستد."""
     lock = app.bot_data.setdefault("user_flights_lock", asyncio.Lock())
     async with lock:                   # many users clicking at once → only one fetch
         cached = app.bot_data.get("user_flights")

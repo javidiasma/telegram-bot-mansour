@@ -34,7 +34,8 @@ NAVASAN_ITEM = os.getenv("NAVASAN_ITEM", "usd_sell")          # page: navasan.ne
 NAVASAN_API_KEY = os.getenv("NAVASAN_API_KEY", "")            # optional official API key (navasan.net/api)
 NAVASAN_API_URL = os.getenv("NAVASAN_API_URL", "http://api.navasan.tech/latest/")
 
-# IKA flights source
+# IKA flights source: Flightradar24 is used now (see build_flights in jobs.py).
+# ikac.ir settings, kept for when the ikac.ir source is switched back on:
 FLIGHTS_URL = os.getenv("FLIGHTS_URL", "https://www.ikac.ir/en-US/airport.ikac/5257/page/Flights")
 FLIGHTS_MAX = int(os.getenv("FLIGHTS_MAX", "30"))
 
@@ -75,7 +76,7 @@ JOIN_TEXT = os.getenv("JOIN_TEXT", "").replace("\\n", "\n") or (
 )
 # Join link for the button. Not needed if CHANNEL_ID is @username; for a private/numeric channel set an invite link.
 CHANNEL_LINK = os.getenv("CHANNEL_LINK", "")
-# How long (minutes) one fetch of the flights list is reused for users, so many clicks don't hit ikac.ir each time
+# How long (minutes) one fetch of the flights list is reused for users, so many clicks don't hit the flights source each time
 USER_FLIGHTS_CACHE_MIN = int(os.getenv("USER_FLIGHTS_CACHE_MIN", "10"))
 
 

@@ -10,7 +10,7 @@ from . import config as cfg
 from .persian import fmt_num, jalali_date, to_fa
 from . import textrender
 from .flights_image import render_flights, status_fa
-from .sources import ikac, navasan
+from .sources import fr24, ikac, navasan
 
 log = logging.getLogger(__name__)
 JOB_PREFIX = "daily:"
@@ -57,7 +57,7 @@ def _status_icon(status: str) -> str:
     return "🕒"
 
 
-def format_flights(flights: list[dict], now: datetime) -> str:
+def format_flights(flights: list[dict], now: datetime, source: str = "ikac.ir") -> str:
     esc = html.escape
     head = [f"✈️ <b>پروازهای خروجی فرودگاه امام خمینی (IKA)</b>", f"📅 {jalali_date(now)}", ""]
     if not flights:
@@ -85,7 +85,7 @@ def format_flights(flights: list[dict], now: datetime) -> str:
         text = "\n".join(head + body)
     if extra > 0:
         text += f"\n\n… و {to_fa(extra)} پرواز دیگر"
-    return text + "\n\nمنبع: ikac.ir" + _footer()
+    return text + f"\n\nمنبع: {source}" + _footer()
 
 
 # ------------------------------------------------------------------ flights (shared by channel post and users)
@@ -95,20 +95,23 @@ async def build_flights(app: Application, now: datetime) -> tuple[bytes | None, 
     Returns (image, text, count): with an image, `text` is its caption; without one, `text` is the full message.
     """
     http = app.bot_data["http"]
-    flights = await ikac.fetch_departures(http, cfg.FLIGHTS_URL)
+    # ikac.ir doesn't answer servers outside Iran (Railway), so Flightradar24 is used instead.
+    # To go back to ikac.ir (e.g. with an Iranian PROXY_URL), comment the fr24 line and uncomment the ikac line:
+    # flights, source = await ikac.fetch_departures(http, cfg.FLIGHTS_URL), "ikac.ir"
+    flights, source = await fr24.fetch_departures(http, cfg.TZ), "Flightradar24"
     if cfg.FLIGHTS_STYLE == "image":
         try:
             bold = await textrender.ensure_font(http, cfg.DATA_DIR, textrender.font_urls("Bold", cfg.FONT_URL))
             regular = await textrender.ensure_font(
                 http, cfg.DATA_DIR, textrender.font_urls("Regular", cfg.FONT_REGULAR_URL)) or bold
             if bold:
-                image = render_flights(flights, now, bold, regular, cfg.SIGNATURE, cfg.FLIGHTS_MAX)
+                image = render_flights(flights, now, bold, regular, cfg.SIGNATURE, cfg.FLIGHTS_MAX, source)
                 caption = f"✈️ <b>پروازهای خروجی فرودگاه امام خمینی</b>\n📅 {jalali_date(now)}" + _footer()
                 return image, caption, len(flights)
             log.warning("Persian font could not be downloaded; sending flights as text")
         except Exception:  # noqa: BLE001 – never lose the post because of a drawing problem
             log.exception("flight image rendering failed; sending text instead")
-    return None, format_flights(flights, now), len(flights)
+    return None, format_flights(flights, now, source), len(flights)
 
 
 # ------------------------------------------------------------------ posting
