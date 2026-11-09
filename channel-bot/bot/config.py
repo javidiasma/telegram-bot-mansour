@@ -37,8 +37,8 @@ NAVASAN_API_URL = os.getenv("NAVASAN_API_URL", "http://api.navasan.tech/latest/"
 # IKA flights source: Flightradar24 is used now (see build_flights in jobs.py).
 # ikac.ir settings, kept for when the ikac.ir source is switched back on:
 FLIGHTS_URL = os.getenv("FLIGHTS_URL", "https://www.ikac.ir/en-US/airport.ikac/5257/page/Flights")
-# At most 10 flights in the flights image/message. FLIGHTS_MAX in Railway can lower this, never raise it.
-FLIGHTS_MAX = max(1, min(int(os.getenv("FLIGHTS_MAX", "10")), 10))
+# At most 12 flights in the flights image/message. FLIGHTS_MAX in Railway can lower this, never raise it.
+FLIGHTS_MAX = max(1, min(int(os.getenv("FLIGHTS_MAX", "12")), 12))
 
 # Optional HTTP proxy, e.g. http://user:pass@1.2.3.4:8080 (useful if an Iranian site blocks foreign servers)
 PROXY_URL = os.getenv("PROXY_URL") or None
