@@ -6,7 +6,7 @@ A Telegram bot that runs your channel on autopilot, managed from a button menu i
 |---|---|
 | 💵 Dollar rate | Posts the Tehran free-market dollar price from navasan.net every day at the time you choose, then deletes yesterday's post. |
 | ✈️ IKA departures | Posts upcoming departing flights (from Flightradar24) every day at your time, then deletes the previous post. |
-| 🎨 AI image | You send a text, AI paints a background, the bot writes your text on it (Persian supported) and shows a preview → post / regenerate / cancel. |
+| 🎨 AI image | You send ONE message (what the poster is + the texts to show); the image model designs the whole poster, Persian text included, and shows a preview → post / regenerate / cancel. |
 | 🎵 Song of the day | Send or forward many songs; the bot caches them and posts one per day at your time, cycling through all of them. |
 
 Every job has: **Send now**, **Change time**, **On/Off**, and **Delete previous post** on/off.
@@ -81,10 +81,10 @@ Stop the Railway service while testing locally (same token).
   loads flights with JavaScript or blocks non-Iranian servers. Fixes: set `PROXY_URL` to an Iran-located HTTP proxy,
   or point `FLIGHTS_URL` to the page/endpoint that actually returns the flight list (see your browser's DevTools →
   Network tab). The site's robots rules discourage automated access, so check you're OK using its data.
-- **AI images** — drawn by an OpenAI-compatible image API (GapGPT by default: `CHAT_API_BASE_URL`,
-  `CHAT_API_KEY`, and `IMAGE_MODEL` set to an image model from your GapGPT panel). The chat model (`CHAT_MODEL`)
-  first turns the admin's Persian text into an English prompt. The AI only draws the background; the text is
-  drawn by the bot with the Vazirmatn font (downloaded on first use), so Persian text is always correct.
+- **AI images** — one step: the admin's request is wrapped in poster-design rules (headline banner, icon badges,
+  price badge, contact bar, Persian text exactly as written) and sent to an OpenAI-compatible image API (GapGPT by
+  default; `IMAGE_MODEL`, portrait `IMAGE_SIZE=1024x1536`, `IMAGE_QUALITY=high`). If `CHAT_MODEL` is set, a chat model
+  first writes a detailed English design brief. The model draws the text itself, so check spelling in the preview.
 
 ## Normal users
 
@@ -104,7 +104,7 @@ bot/
   handlers.py      admin panel (buttons, time input, songs, AI flow) + normal-user menu
   jobs.py          building posts, posting, deleting previous post, daily schedule, retries
   storage.py       SQLite: settings, last message ids, song cache
-  imagegen.py      AI background + Persian text overlay
+  imagegen.py      AI poster prompt + image API (old background+overlay method kept, unused)
   persian.py       Persian digits & Jalali date
   sources/navasan.py   dollar rate
   sources/fr24.py      IKA departures from Flightradar24 (active)

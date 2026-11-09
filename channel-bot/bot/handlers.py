@@ -376,20 +376,20 @@ async def del_song(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def ai_button(q, context, arg: str) -> None:
     app = context.application
     if arg == "start":
-        context.user_data["await"] = ("ai_text",)
-        await q.edit_message_text("🎨 متنی را که می‌خواهید روی تصویر نوشته شود بفرستید (فارسی یا انگلیسی).\n"
-                                  "برای رفتن به خط بعد، Enter بزنید. برای انصراف /cancel را بفرستید.")
-    elif arg == "skip":
-        context.user_data.pop("await", None)
-        await q.edit_message_text("⏳ در حال ساخت تصویر… (ممکن است تا یک دقیقه طول بکشد)")
-        await make_and_preview(q.message.chat_id, context, None)
+        context.user_data["await"] = ("ai_request",)
+        await q.edit_message_text(
+            "🎨 در یک پیام بنویسید پوستر درباره چیست و چه متن‌هایی روی آن بیاید. مثلاً:\n\n"
+            "<i>پوستر تور کویر مصر، ۱۰ تا ۱۲ دی، فول برد، قیمت ۱ تومن، "
+            "برای اطلاعات بیشتر با ۰۲۱۴۸۴۰۷ تماس بگیر. حال‌وهوای غروب کویر با شتر، چادر و فانوس.</i>\n\n"
+            "متن‌ها را دقیقاً همان‌طور که باید روی تصویر بیاید بنویسید؛ هرچه کوتاه‌تر، دقیق‌تر نوشته می‌شود.\n"
+            "برای انصراف /cancel را بفرستید.", parse_mode=ParseMode.HTML)
     elif arg == "retry":
         ai = context.user_data.get("ai")
-        if not ai:
+        if not ai or not ai.get("request"):
             await q.message.reply_text("چیزی برای ساخت دوباره نیست. از 🎨 ساخت تصویر دوباره شروع کنید.")
             return
-        await q.message.reply_text("⏳ در حال ساخت یک نسخه دیگر…")
-        await make_and_preview(q.message.chat_id, context, ai.get("description"))
+        await q.message.reply_text("⏳ در حال ساخت یک نسخه دیگر… (ممکن است یکی دو دقیقه طول بکشد)")
+        await make_and_preview(q.message.chat_id, context)
     elif arg == "post":
         ai = context.user_data.get("ai")
         if not ai or not ai.get("file_id"):
@@ -404,21 +404,18 @@ async def ai_button(q, context, arg: str) -> None:
         await q.message.reply_text("کنار گذاشته شد.", reply_markup=main_menu())
 
 
-async def make_and_preview(chat_id: int, context: ContextTypes.DEFAULT_TYPE, description: str | None) -> None:
+async def make_and_preview(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
     app = context.application
     ai = context.user_data.setdefault("ai", {})
-    ai["description"] = description
     http = app.bot_data["http"]
+    await app.bot.send_chat_action(chat_id, ChatAction.UPLOAD_PHOTO)
     try:
-        better = await imagegen.write_prompt(http, cfg.CHAT_API_BASE_URL, cfg.CHAT_API_KEY, cfg.CHAT_MODEL,
-                                             ai["text"], description)
-        prompt = imagegen.build_prompt(ai["text"], better or description)
-        bg = await imagegen.generate_background(http, prompt, cfg.IMAGE_API_BASE_URL, cfg.IMAGE_API_KEY,
-                                                cfg.IMAGE_MODEL)
-        font = await textrender.ensure_font(http, cfg.DATA_DIR, textrender.font_urls("Bold", cfg.FONT_URL))
-        if not font:
-            raise RuntimeError("فونت فارسی دانلود نشد؛ لطفاً بعداً دوباره امتحان کنید.")
-        data = imagegen.render_text(bg, ai["text"], font)
+        brief = await imagegen.write_prompt(http, cfg.CHAT_API_BASE_URL, cfg.CHAT_API_KEY, cfg.CHAT_MODEL,
+                                            ai["request"])
+        prompt = imagegen.build_poster_prompt(ai["request"], brief)
+        raw = await imagegen.generate_image(http, prompt, cfg.IMAGE_API_BASE_URL, cfg.IMAGE_API_KEY,
+                                            cfg.IMAGE_MODEL, cfg.IMAGE_SIZE, cfg.IMAGE_QUALITY)
+        data = imagegen.to_jpeg(raw)
     except Exception as e:  # noqa: BLE001
         log.exception("image generation failed")
         await app.bot.send_message(chat_id, f"❌ ساخت تصویر انجام نشد: {e}",
@@ -457,19 +454,11 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                          + job_text(app, name), parse_mode=ParseMode.HTML,
                                          reply_markup=job_menu(store, name))
 
-    elif state[0] == "ai_text":
-        context.user_data["ai"] = {"text": text[:400]}
-        context.user_data["await"] = ("ai_prompt",)
-        await update.message.reply_text(
-            "حالا تصویر پس‌زمینه را توصیف کنید (توضیح به انگلیسی نتیجه بهتری می‌دهد)، مثلاً:\n"
-            "<i>Tehran skyline at sunset, watercolor</i>\n"
-            "یا دکمه «رد شدن» را بزنید تا هوش مصنوعی از روی متن شما تصویر بسازد.",
-            parse_mode=ParseMode.HTML, reply_markup=M([[B("⏭ رد شدن", callback_data="ai:skip")]]))
-
-    elif state[0] == "ai_prompt":
+    elif state[0] in ("ai_request", "ai_text", "ai_prompt"):   # old two-step states → treated as one request
+        context.user_data["ai"] = {"request": text.strip()[:1500]}
         context.user_data.pop("await", None)
-        await update.message.reply_text("⏳ در حال ساخت تصویر… (ممکن است تا یک دقیقه طول بکشد)")
-        await make_and_preview(update.effective_chat.id, context, text[:500])
+        await update.message.reply_text("⏳ در حال طراحی پوستر… (ممکن است یکی دو دقیقه طول بکشد)")
+        await make_and_preview(update.effective_chat.id, context)
 
     elif state[0] == "songs":
         await update.message.reply_text("فایل صوتی بفرستید، یا دکمه «تمام شد» را بزنید.", reply_markup=DONE_BTN)

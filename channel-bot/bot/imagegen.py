@@ -1,7 +1,7 @@
-"""AI background image + crisp text overlay (Persian-safe).
+"""AI poster images.
 
-AI models write Persian text badly, so the AI only paints the background and the bot
-draws the admin's text on top with a real Persian font (Vazirmatn).
+The admin writes one request; the image model designs the whole poster, Persian text included.
+The older "AI background + text drawn by the bot" method (render_text) is kept below but no longer used.
 """
 import base64
 import io
@@ -19,29 +19,44 @@ class ImageError(Exception):
     pass
 
 
-# ---------------------------------------------------------------- optional prompt writer (chat model)
+# ---------------------------------------------------------------- poster prompt (one step)
+# The admin writes ONE message (usually Persian) with what the poster is about and the text it should show.
+# The image model designs the whole poster, text included, like a graphic designer would.
+POSTER_RULES = (
+    "Design a professional, eye-catching Persian (Farsi) social-media advertising poster for a travel agency, "
+    "in vertical portrait format, like a top Instagram ad by an Iranian graphic designer. "
+    "Use a stunning, photorealistic, high-detail scene that fits the subject as the background, with cinematic "
+    "warm lighting and rich colors. Lay out the information in clear, well-designed graphic elements: a big bold "
+    "headline in a decorative brush-stroke or ribbon banner at the top; small rounded pill badges, each with a simple "
+    "icon (calendar for dates, plate/cloche for meals, plane, hotel, etc.); a bold red price badge if there is a "
+    "price; and a contact bar with a phone icon at the bottom if there is a phone number. Strong contrast so every "
+    "word is easy to read. All text must be in Persian (Farsi), right-to-left, using a bold modern Persian typeface "
+    "(like Vazirmatn or Lalezar), with correctly connected letters, spelled EXACTLY as given; Persian digits. "
+    "Write only the texts given below; do not invent extra words, slogans, logos or watermarks."
+)
+
 PROMPT_SYSTEM = (
-    "You write prompts for an AI image generator. The user gives the text that will be printed on a "
-    "picture (often Persian) and optionally an idea for the background. Reply with ONE English prompt, "
-    "at most 60 words, describing only the background scene: subject, mood, style, lighting and colors. "
-    "Never ask for any text, letters, words or logos in the image. Reply with the prompt only."
+    "You turn a travel agency admin's short request (usually Persian) into a prompt for an AI image model that "
+    "designs a complete Persian advertising poster. Reply with ONE English prompt of at most 180 words: describe the "
+    "background scene and mood in detail, then list every text element that must appear, each in double quotes, "
+    "copied EXACTLY in Persian from the request (title, dates, meal plan, price, phone, etc.), saying where each goes "
+    "(headline banner at top, icon pill badges, red price badge, contact bar at bottom). Do not translate, add or "
+    "change any Persian text. Reply with the prompt only."
 )
 
 
-async def write_prompt(client, base_url: str, api_key: str, model: str,
-                       text: str, description: str | None) -> str | None:
-    """Uses an OpenAI-compatible chat model to turn the admin's (Persian) input into a good English
-    image prompt. Returns None on any failure so the caller can fall back to the plain prompt."""
+async def write_prompt(client, base_url: str, api_key: str, model: str, request: str) -> str | None:
+    """Optional: a chat model turns the admin's request into a detailed poster brief.
+    Returns None on any failure so the caller falls back to the plain prompt."""
     if not (base_url and api_key and model):
         return None
     try:
         r = await client.post(
             base_url.rstrip("/") + "/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
-            json={"model": model, "max_tokens": 200, "temperature": 0.7, "messages": [
+            json={"model": model, "max_tokens": 500, "temperature": 0.6, "messages": [
                 {"role": "system", "content": PROMPT_SYSTEM},
-                {"role": "user", "content": f"Text on the image: {text}\n"
-                                            f"Background idea: {description or '(none, choose something fitting)'}"},
+                {"role": "user", "content": request},
             ]},
             timeout=60,
         )
@@ -49,29 +64,38 @@ async def write_prompt(client, base_url: str, api_key: str, model: str,
             log.warning("prompt writer returned %s: %s", r.status_code, r.text[:200])
             return None
         content = r.json()["choices"][0]["message"]["content"].strip().strip('"')
-        return content[:600] or None
+        return content[:1500] or None
     except Exception:  # noqa: BLE001
         log.exception("prompt writer failed")
         return None
 
 
-# ---------------------------------------------------------------- AI background
-def build_prompt(text: str, description: str | None) -> str:
-    base = description.strip() if description else f"A beautiful artistic background inspired by: {text}"
-    return (f"{base}. High quality, cinematic lighting, rich colors, simple composition with calm space "
-            "in the lower half. Absolutely no text, no letters, no words, no watermark, no logo.")
+def build_poster_prompt(request: str, brief: str | None) -> str:
+    """The admin's own words always go in, so no text is lost even if the brief missed something."""
+    parts = [POSTER_RULES]
+    if brief:
+        parts.append(f"Design brief: {brief}")
+    parts.append(f"The admin's request (in Persian), with the exact texts to show on the poster:\n{request}")
+    return "\n\n".join(parts)
 
 
-async def generate_background(client, prompt: str, base_url: str, api_key: str, model: str) -> bytes:
+# ---------------------------------------------------------------- image API
+async def generate_image(client, prompt: str, base_url: str, api_key: str, model: str,
+                         size: str = "1024x1536", quality: str = "high") -> bytes:
     """Calls an OpenAI-compatible /images/generations endpoint (GapGPT, OpenAI, ...)."""
     if not (base_url and api_key and model):
         raise ImageError("سرویس ساخت تصویر تنظیم نشده است (IMAGE_API_BASE_URL / IMAGE_API_KEY / IMAGE_MODEL).")
-    r = await client.post(
-        base_url.rstrip("/") + "/images/generations",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={"model": model, "prompt": prompt, "size": "1024x1024", "n": 1},
-        timeout=180,
-    )
+    url = base_url.rstrip("/") + "/images/generations"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    body = {"model": model, "prompt": prompt, "size": size, "n": 1}
+    if quality:
+        body["quality"] = quality
+    r = await client.post(url, headers=headers, json=body, timeout=300)
+    if r.status_code == 400 and ("quality" in body or size != "1024x1024"):
+        # some models/providers reject these options – retry with the plain defaults
+        log.warning("image API rejected size/quality (%s); retrying with defaults", r.text[:200])
+        r = await client.post(url, headers=headers, json={"model": model, "prompt": prompt, "n": 1,
+                                                           "size": "1024x1024"}, timeout=300)
     if r.status_code >= 400:
         raise ImageError(f"خطای سرویس تصویر ({r.status_code}): {r.text[:300]}")
     try:
@@ -87,6 +111,16 @@ async def generate_background(client, prompt: str, base_url: str, api_key: str, 
     raise ImageError("سرویس تصویر هیچ تصویری برنگرداند.")
 
 
+def to_jpeg(data: bytes) -> bytes:
+    """Re-encodes the model's PNG as a good JPEG (smaller upload, no crop, no overlay)."""
+    img = Image.open(io.BytesIO(data)).convert("RGB")
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=93)
+    return out.getvalue()
+
+
+# ---------------------------------------------------------------- old method (kept, not used):
+# AI background + the bot drawing the text in a box with a Persian font.
 def _shape(line: str) -> str:
     return tr.shape(line)
 

@@ -46,9 +46,12 @@ PROXY_URL = os.getenv("PROXY_URL") or None
 IMAGE_API_BASE_URL = os.getenv("IMAGE_API_BASE_URL") or os.getenv("CHAT_API_BASE_URL") or "https://api.gapgpt.app/v1"
 IMAGE_API_KEY = os.getenv("IMAGE_API_KEY") or os.getenv("CHAT_API_KEY") or os.getenv("OPENAI_API_KEY", "")
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-1")
+# Poster size and quality (gpt-image-1: 1024x1536 portrait, 1536x1024 landscape, 1024x1024; quality low/medium/high)
+IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1024x1536")
+IMAGE_QUALITY = os.getenv("IMAGE_QUALITY", "high")
 
-# Optional OpenAI-compatible CHAT model that rewrites the admin's text into a better English image prompt.
-# Image generation itself still uses Pollinations/OpenAI above. Leave empty to skip this step.
+# Optional OpenAI-compatible CHAT model that turns the admin's request into a detailed English poster brief
+# (all Persian texts kept exactly). Leave empty to skip; the request is then sent with built-in design rules.
 CHAT_API_BASE_URL = os.getenv("CHAT_API_BASE_URL", "")
 CHAT_API_KEY = os.getenv("CHAT_API_KEY", "")
 CHAT_MODEL = os.getenv("CHAT_MODEL", "")
