@@ -68,6 +68,13 @@ WELCOME_TEXT = os.getenv("WELCOME_TEXT", "").replace("\\n", "\n") or (
     "من کارمند هوشمند منصورتراولز هستم. چطور می‌تونم کمکت کنم؟\n\n"
     "برای دیدن پروازهای خروجی امروز فرودگاه امام خمینی، دکمه پایین را بزن 👇"
 )
+# Users must be members of the channel before using the bot. Message shown to non-members:
+JOIN_TEXT = os.getenv("JOIN_TEXT", "").replace("\\n", "\n") or (
+    "برای استفاده از خدمات ربات، اول عضو کانال ما شوید 🙏\n\n"
+    "بعد از عضویت، دکمه «✅ دنبال کردم» را بزنید."
+)
+# Join link for the button. Not needed if CHANNEL_ID is @username; for a private/numeric channel set an invite link.
+CHANNEL_LINK = os.getenv("CHANNEL_LINK", "")
 # How long (minutes) one fetch of the flights list is reused for users, so many clicks don't hit ikac.ir each time
 USER_FLIGHTS_CACHE_MIN = int(os.getenv("USER_FLIGHTS_CACHE_MIN", "10"))
 

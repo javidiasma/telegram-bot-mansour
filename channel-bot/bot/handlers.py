@@ -91,16 +91,72 @@ def welcome_text(user) -> str:
     return cfg.WELCOME_TEXT.replace("{name}", user.first_name or "")
 
 
+MEMBER_STATUSES = {"member", "administrator", "creator", "owner"}
+
+
+async def is_channel_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    """عضویت کاربر در کانال را بررسی می‌کند (ربات باید ادمین کانال باشد).
+    اگر بررسی ممکن نباشد (مثلاً ربات ادمین کانال نیست)، کاربر رد نمی‌شود تا ربات برای همه قفل نشود."""
+    try:
+        m = await context.application.bot.get_chat_member(cfg.CHANNEL_ID, user_id)
+    except Exception:  # noqa: BLE001
+        log.exception("could not check channel membership of %s", user_id)
+        return True
+    status = str(getattr(m.status, "value", m.status))
+    return status in MEMBER_STATUSES or (status == "restricted" and bool(getattr(m, "is_member", False)))
+
+
+async def channel_link(context: ContextTypes.DEFAULT_TYPE) -> str | None:
+    if cfg.CHANNEL_LINK:
+        return cfg.CHANNEL_LINK
+    if isinstance(cfg.CHANNEL_ID, str) and cfg.CHANNEL_ID.startswith("@"):
+        return f"https://t.me/{cfg.CHANNEL_ID[1:]}"
+    bd = context.application.bot_data
+    if "channel_link" not in bd:       # numeric channel id → ask Telegram once
+        try:
+            chat = await context.application.bot.get_chat(cfg.CHANNEL_ID)
+            bd["channel_link"] = (f"https://t.me/{chat.username}" if chat.username else chat.invite_link)
+        except Exception:  # noqa: BLE001
+            log.exception("could not get channel link")
+            bd["channel_link"] = None
+    return bd["channel_link"]
+
+
+async def join_gate_markup(context: ContextTypes.DEFAULT_TYPE) -> M:
+    rows = []
+    link = await channel_link(context)
+    if link:
+        rows.append([B("📢 عضویت در کانال", url=link)])
+    rows.append([B("✅ دنبال کردم", callback_data="u:joined")])
+    return M(rows)
+
+
+async def send_join_gate(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await context.application.bot.send_message(chat_id, cfg.JOIN_TEXT, reply_markup=await join_gate_markup(context))
+
+
 async def user_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg, user = update.message, update.effective_user
-    if update.callback_query:          # e.g. an old admin button pressed by someone who is no longer admin
-        await update.callback_query.answer()
+    if update.callback_query:
+        q = update.callback_query
+        if q.data != "u:joined":       # e.g. an old admin button pressed by someone who is no longer admin
+            await q.answer()
+            return
+        if not await is_channel_member(context, user.id):
+            await q.answer("هنوز عضو کانال نشده‌اید. اول عضو شوید، بعد «دنبال کردم» را بزنید.", show_alert=True)
+            return
+        await q.answer("✅ عضویت شما تأیید شد")
+        await q.edit_message_text("✅ عضویت شما در کانال تأیید شد. ممنون!")
+        await context.application.bot.send_message(q.message.chat_id, welcome_text(user),
+                                                   reply_markup=user_keyboard())
         return
     if not msg:
         return
     text = (msg.text or "").strip()
     if text.startswith("/id"):
         await msg.reply_text(f"شناسه تلگرام شما: <code>{user.id}</code>", parse_mode=ParseMode.HTML)
+    elif not await is_channel_member(context, user.id):
+        await send_join_gate(msg.chat_id, context)
     elif text == USER_FLIGHTS_BTN or text.startswith("/flights"):
         await send_user_flights(msg.chat_id, context)
     else:                              # /start and anything else → welcome
