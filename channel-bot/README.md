@@ -6,7 +6,7 @@ A Telegram bot that runs your channel on autopilot, managed from a button menu i
 |---|---|
 | 💵 Dollar rate | Posts the Tehran free-market dollar price from navasan.net every day at the time you choose, then deletes yesterday's post. |
 | ✈️ IKA departures | Posts upcoming departing flights (from Flightradar24) every day at your time, then deletes the previous post. |
-| 🎨 AI image | You send ONE message (what the poster is + the texts to show); the image model designs the whole poster, Persian text included, and shows a preview → post / regenerate / cancel. |
+| 🎨 AI image | You send ONE message (what the poster is + the texts to show); the image model designs the whole poster, Persian text included, and shows a preview → post / ✏️ edit (describe a change; uses `/images/edits`, or rebuilds with the change if the provider can't edit) / regenerate / cancel. |
 | 🎵 Song of the day | Send or forward many songs; the bot caches them and posts one per day at your time, cycling through all of them. |
 
 Every job has: **Send now**, **Change time**, **On/Off**, and **Delete previous post** on/off.

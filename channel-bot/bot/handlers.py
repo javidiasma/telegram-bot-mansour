@@ -390,6 +390,30 @@ async def ai_button(q, context, arg: str) -> None:
             return
         await q.message.reply_text("⏳ در حال ساخت یک نسخه دیگر… (ممکن است یکی دو دقیقه طول بکشد)")
         await make_and_preview(q.message.chat_id, context)
+    elif arg == "edit":
+        ai = context.user_data.get("ai")
+        if not ai or not ai.get("request"):
+            await q.message.reply_text("تصویری برای ویرایش نیست. از 🎨 ساخت تصویر دوباره شروع کنید.")
+            return
+        context.user_data["await"] = ("ai_edit",)
+        await q.message.reply_text(
+            "✏️ بنویسید چه چیزی در همین تصویر عوض شود، مثلاً:\n\n"
+            "<i>قیمت را ۲ میلیون تومان کن</i>\n<i>پس‌زمینه را شب پرستاره کن</i>\n<i>شتر را حذف کن</i>\n\n"
+            "بقیه تصویر تا حد ممکن همان‌طور می‌ماند. برای انصراف /cancel را بفرستید.", parse_mode=ParseMode.HTML)
+    elif arg == "redo":
+        ai = context.user_data.get("ai")
+        if not ai or not ai.get("edits"):
+            await q.message.reply_text("چیزی برای ساخت دوباره نیست. از 🎨 ساخت تصویر دوباره شروع کنید.")
+            return
+        await q.message.reply_text("⏳ در حال اعمال تغییر… (ممکن است یکی دو دقیقه طول بکشد)")
+        await make_and_preview(q.message.chat_id, context, ai["edits"][-1])
+    elif arg == "last":
+        ai = context.user_data.get("ai")
+        if not ai or not ai.get("file_id"):
+            await q.message.reply_text("نسخه قبلی پیدا نشد.")
+            return
+        await context.application.bot.send_photo(q.message.chat_id, ai["file_id"],
+                                                 caption="پیش‌نمایش — در کانال ارسال شود؟", reply_markup=PREVIEW_KB)
     elif arg == "post":
         ai = context.user_data.get("ai")
         if not ai or not ai.get("file_id"):
@@ -404,29 +428,50 @@ async def ai_button(q, context, arg: str) -> None:
         await q.message.reply_text("کنار گذاشته شد.", reply_markup=main_menu())
 
 
-async def make_and_preview(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+PREVIEW_KB = M([[B("📤 ارسال در کانال", callback_data="ai:post")],
+                [B("✏️ ویرایش", callback_data="ai:edit"), B("🔄 ساخت دوباره", callback_data="ai:retry")],
+                [B("❌ انصراف", callback_data="ai:cancel")]])
+EDIT_UNSUPPORTED = (400, 404, 405, 415, 422, 501)   # provider/model can't edit images → rebuild instead
+
+
+async def make_and_preview(chat_id: int, context: ContextTypes.DEFAULT_TYPE, change: str | None = None) -> None:
+    """Builds a new poster, or – with `change` – edits the last one (rebuilding with the change if editing
+    isn't supported)."""
     app = context.application
     ai = context.user_data.setdefault("ai", {})
     http = app.bot_data["http"]
+    note = ""
     await app.bot.send_chat_action(chat_id, ChatAction.UPLOAD_PHOTO)
     try:
-        brief = await imagegen.write_prompt(http, cfg.CHAT_API_BASE_URL, cfg.CHAT_API_KEY, cfg.CHAT_MODEL,
-                                            ai["request"])
-        prompt = imagegen.build_poster_prompt(ai["request"], brief)
-        raw = await imagegen.generate_image(http, prompt, cfg.IMAGE_API_BASE_URL, cfg.IMAGE_API_KEY,
-                                            cfg.IMAGE_MODEL, cfg.IMAGE_SIZE, cfg.IMAGE_QUALITY)
+        raw = None
+        if change and ai.get("image"):
+            try:
+                raw = await imagegen.edit_image(http, ai["image"], change, cfg.IMAGE_API_BASE_URL, cfg.IMAGE_API_KEY,
+                                                cfg.IMAGE_MODEL, cfg.IMAGE_SIZE, cfg.IMAGE_QUALITY)
+            except imagegen.ImageError as e:
+                if e.status not in EDIT_UNSUPPORTED:
+                    raise
+                log.warning("image edit not supported (%s); rebuilding with the change", e)
+                note = "\n(ویرایش مستقیم در این سرویس ممکن نبود؛ پوستر با تغییرات شما از نو ساخته شد.)"
+        if raw is None:
+            brief = await imagegen.write_prompt(http, cfg.CHAT_API_BASE_URL, cfg.CHAT_API_KEY, cfg.CHAT_MODEL,
+                                                ai["request"])
+            prompt = imagegen.build_poster_prompt(ai["request"], brief, ai.get("edits"))
+            raw = await imagegen.generate_image(http, prompt, cfg.IMAGE_API_BASE_URL, cfg.IMAGE_API_KEY,
+                                                cfg.IMAGE_MODEL, cfg.IMAGE_SIZE, cfg.IMAGE_QUALITY)
         data = imagegen.to_jpeg(raw)
     except Exception as e:  # noqa: BLE001
         log.exception("image generation failed")
-        await app.bot.send_message(chat_id, f"❌ ساخت تصویر انجام نشد: {e}",
-                                   reply_markup=M([[B("🔄 تلاش دوباره", callback_data="ai:retry")],
-                                                   [B("⬅️ منو", callback_data="menu")]]))
+        rows = [[B("🔄 تلاش دوباره", callback_data="ai:redo" if change else "ai:retry")]]
+        if ai.get("file_id"):
+            rows.append([B("↩️ برگشت به نسخه قبلی", callback_data="ai:last")])
+        rows.append([B("⬅️ منو", callback_data="menu")])
+        await app.bot.send_message(chat_id, f"❌ ساخت تصویر انجام نشد: {e}", reply_markup=M(rows))
         return
-    sent = await app.bot.send_photo(
-        chat_id, data, caption="پیش‌نمایش — در کانال ارسال شود؟",
-        reply_markup=M([[B("📤 ارسال در کانال", callback_data="ai:post")],
-                        [B("🔄 ساخت دوباره", callback_data="ai:retry"), B("❌ انصراف", callback_data="ai:cancel")]]))
+    sent = await app.bot.send_photo(chat_id, data, caption="پیش‌نمایش — در کانال ارسال شود؟" + note,
+                                    reply_markup=PREVIEW_KB)
     ai["file_id"] = sent.photo[-1].file_id
+    ai["image"] = raw            # kept in memory so the next ✏️ edit starts from this version
 
 
 # ------------------------------------------------------------------ free text (time / AI input)
@@ -459,6 +504,16 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data.pop("await", None)
         await update.message.reply_text("⏳ در حال طراحی پوستر… (ممکن است یکی دو دقیقه طول بکشد)")
         await make_and_preview(update.effective_chat.id, context)
+
+    elif state[0] == "ai_edit":
+        change = text.strip()[:800]
+        if not change:
+            await update.message.reply_text("لطفاً تغییر را بنویسید یا /cancel.")
+            return
+        context.user_data.pop("await", None)
+        context.user_data.setdefault("ai", {}).setdefault("edits", []).append(change)
+        await update.message.reply_text("⏳ در حال اعمال تغییر… (ممکن است یکی دو دقیقه طول بکشد)")
+        await make_and_preview(update.effective_chat.id, context, change)
 
     elif state[0] == "songs":
         await update.message.reply_text("فایل صوتی بفرستید، یا دکمه «تمام شد» را بزنید.", reply_markup=DONE_BTN)

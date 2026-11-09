@@ -16,7 +16,9 @@ log = logging.getLogger(__name__)
 
 
 class ImageError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 # ---------------------------------------------------------------- poster prompt (one step)
@@ -32,7 +34,10 @@ POSTER_RULES = (
     "price; and a contact bar with a phone icon at the bottom if there is a phone number. Strong contrast so every "
     "word is easy to read. All text must be in Persian (Farsi), right-to-left, using a bold modern Persian typeface "
     "(like Vazirmatn or Lalezar), with correctly connected letters, spelled EXACTLY as given; Persian digits. "
-    "Write only the texts given below; do not invent extra words, slogans, logos or watermarks."
+    "Write only the texts given below; do not invent extra words, slogans, logos or watermarks. "
+    "The request may also contain instructions to you (words like poster/پوستر, design, image, or a description of "
+    "the scene and mood): follow them, but never print them on the poster - only print the actual information "
+    "(destination/title, dates, meal plan, hotel, price, phone, etc.)."
 )
 
 PROMPT_SYSTEM = (
@@ -70,13 +75,56 @@ async def write_prompt(client, base_url: str, api_key: str, model: str, request:
         return None
 
 
-def build_poster_prompt(request: str, brief: str | None) -> str:
+def build_poster_prompt(request: str, brief: str | None, edits: list[str] | None = None) -> str:
     """The admin's own words always go in, so no text is lost even if the brief missed something."""
     parts = [POSTER_RULES]
     if brief:
         parts.append(f"Design brief: {brief}")
     parts.append(f"The admin's request (in Persian), with the exact texts to show on the poster:\n{request}")
+    if edits:
+        parts.append("Changes the admin asked for after seeing earlier versions (apply all of them; "
+                     "they override the request where they conflict):\n" + "\n".join(f"- {e}" for e in edits))
     return "\n\n".join(parts)
+
+
+EDIT_RULES = (
+    "Edit this Persian (Farsi) advertising poster. Apply ONLY the change described below and keep everything else "
+    "the same: layout, background, colors, style, and every Persian text exactly as it is (same spelling, correctly "
+    "connected right-to-left letters, Persian digits), unless the change is about that text. If the change gives "
+    "new Persian text, write it exactly as given.\n\nRequested change (may be in Persian):\n"
+)
+
+
+async def edit_image(client, image: bytes, change: str, base_url: str, api_key: str, model: str,
+                     size: str = "1024x1536", quality: str = "high") -> bytes:
+    """Calls an OpenAI-compatible /images/edits endpoint with the current poster and the requested change.
+    Raises ImageError (with .status) if the provider can't do it, so the caller can fall back to regenerating."""
+    if not (base_url and api_key and model):
+        raise ImageError("سرویس ساخت تصویر تنظیم نشده است (IMAGE_API_BASE_URL / IMAGE_API_KEY / IMAGE_MODEL).")
+    data = {"model": model, "prompt": EDIT_RULES + change, "n": "1"}
+    if size:
+        data["size"] = size
+    if quality:
+        data["quality"] = quality
+    r = await client.post(base_url.rstrip("/") + "/images/edits", headers={"Authorization": f"Bearer {api_key}"},
+                          data=data, files={"image": ("poster.png", image, "image/png")}, timeout=300)
+    return await _read_image(client, r)
+
+
+async def _read_image(client, r) -> bytes:
+    if r.status_code >= 400:
+        raise ImageError(f"خطای سرویس تصویر ({r.status_code}): {r.text[:300]}", r.status_code)
+    try:
+        item = r.json()["data"][0]
+    except Exception as e:  # noqa: BLE001
+        raise ImageError(f"پاسخ نامعتبر از سرویس تصویر: {r.text[:300]}") from e
+    if item.get("b64_json"):
+        return base64.b64decode(item["b64_json"])
+    if item.get("url"):
+        img = await client.get(item["url"], timeout=120)
+        img.raise_for_status()
+        return img.content
+    raise ImageError("سرویس تصویر هیچ تصویری برنگرداند.")
 
 
 # ---------------------------------------------------------------- image API
@@ -96,19 +144,7 @@ async def generate_image(client, prompt: str, base_url: str, api_key: str, model
         log.warning("image API rejected size/quality (%s); retrying with defaults", r.text[:200])
         r = await client.post(url, headers=headers, json={"model": model, "prompt": prompt, "n": 1,
                                                            "size": "1024x1024"}, timeout=300)
-    if r.status_code >= 400:
-        raise ImageError(f"خطای سرویس تصویر ({r.status_code}): {r.text[:300]}")
-    try:
-        item = r.json()["data"][0]
-    except Exception as e:  # noqa: BLE001
-        raise ImageError(f"پاسخ نامعتبر از سرویس تصویر: {r.text[:300]}") from e
-    if item.get("b64_json"):
-        return base64.b64decode(item["b64_json"])
-    if item.get("url"):
-        img = await client.get(item["url"], timeout=120)
-        img.raise_for_status()
-        return img.content
-    raise ImageError("سرویس تصویر هیچ تصویری برنگرداند.")
+    return await _read_image(client, r)
 
 
 def to_jpeg(data: bytes) -> bytes:
