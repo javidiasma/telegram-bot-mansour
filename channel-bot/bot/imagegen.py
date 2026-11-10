@@ -3,6 +3,7 @@
 The admin writes one request; the image model designs the whole poster, Persian text included.
 The older "AI background + text drawn by the bot" method (render_text) is kept below but no longer used.
 """
+import asyncio
 import base64
 import io
 import logging
@@ -13,6 +14,24 @@ from . import textrender as tr
 
 SIZE = 1080
 log = logging.getLogger(__name__)
+
+
+TEMPORARY = (403, 408, 429, 500, 502, 503, 504)   # provider errors that are usually gone on the next try
+RETRY_WAIT = 6
+
+
+def friendly(e: Exception) -> str:
+    """Short Persian explanation for the admin; the full error stays in the log."""
+    status = getattr(e, "status", None)
+    if status in (403, 429, 500, 502, 503, 504) and "api_provider_error" in str(e):
+        return ("سرویس GapGPT درخواست را به سرویس تصویر نرساند (خطای موقت سمت GapGPT، کد "
+                f"{status}). چند دقیقه دیگر «تلاش دوباره» را بزنید. اگر مدام تکرار شد، اعتبار حساب و دسترسی "
+                "به مدل تصویر را در پنل GapGPT چک کنید یا IMAGE_FALLBACK_MODEL را تنظیم کنید.")
+    if status == 401:
+        return "کلید API سرویس تصویر نامعتبر است (کد ۴۰۱). IMAGE_API_KEY / CHAT_API_KEY را در Railway چک کنید."
+    if status == 402:
+        return "اعتبار حساب GapGPT تمام شده است (کد ۴۰۲)."
+    return str(e)
 
 
 class ImageError(Exception):
@@ -139,6 +158,11 @@ async def generate_image(client, prompt: str, base_url: str, api_key: str, model
     if quality:
         body["quality"] = quality
     r = await client.post(url, headers=headers, json=body, timeout=300)
+    if r.status_code in TEMPORARY:
+        # GapGPT's upstream provider often rejects one request and accepts the next one
+        log.warning("image API returned %s; retrying once: %s", r.status_code, r.text[:200])
+        await asyncio.sleep(RETRY_WAIT)
+        r = await client.post(url, headers=headers, json=body, timeout=300)
     if r.status_code == 400 and ("quality" in body or size != "1024x1024"):
         # some models/providers reject these options – retry with the plain defaults
         log.warning("image API rejected size/quality (%s); retrying with defaults", r.text[:200])

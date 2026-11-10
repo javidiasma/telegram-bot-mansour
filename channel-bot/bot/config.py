@@ -20,7 +20,14 @@ ADMIN_IDS = _int_set(os.getenv("ADMIN_IDS", ""))
 CHANNEL_ID = _chat_id(os.getenv("CHANNEL_ID", ""))
 
 TZ = ZoneInfo(os.getenv("TZ_NAME", "Asia/Tehran"))
-DATA_DIR = Path(os.getenv("DATA_DIR", "./data"))
+# Where the database lives. On Railway it must be on a volume, or every redeploy forgets settings,
+# songs and the last post ids (so "delete previous post" can't find the old post).
+ON_RAILWAY = bool(os.getenv("RAILWAY_ENVIRONMENT_NAME") or os.getenv("RAILWAY_PROJECT_ID"))
+RAILWAY_VOLUME = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "")
+DATA_DIR = Path(os.getenv("DATA_DIR") or RAILWAY_VOLUME or "./data")
+if RAILWAY_VOLUME and not DATA_DIR.resolve().is_relative_to(Path(RAILWAY_VOLUME).resolve()):
+    DATA_DIR = Path(RAILWAY_VOLUME)          # DATA_DIR pointed outside the volume → would be wiped on redeploy
+DATA_ON_VOLUME = bool(RAILWAY_VOLUME)
 
 # Default daily times (HH:MM, Tehran time) – the admin can change them from the bot.
 DEFAULT_TIMES = {
@@ -50,6 +57,8 @@ IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-1")
 # Poster size and quality (gpt-image-1: 1024x1536 portrait, 1536x1024 landscape, 1024x1024; quality low/medium/high)
 IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1024x1536")
 IMAGE_QUALITY = os.getenv("IMAGE_QUALITY", "high")
+# Optional second image model, tried when the main one keeps failing (e.g. another image model from the GapGPT panel)
+IMAGE_FALLBACK_MODEL = os.getenv("IMAGE_FALLBACK_MODEL", "")
 
 # Optional OpenAI-compatible CHAT model that turns the admin's request into a detailed English poster brief
 # (all Persian texts kept exactly). Leave empty to skip; the request is then sent with built-in design rules.

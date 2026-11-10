@@ -47,6 +47,8 @@ git push -u origin main
    ```
    (All optional variables are listed in `.env.example`.)
 3. **Add a volume** so settings and the song list survive redeploys: on the project canvas right-click the service (or press ⌘K / Ctrl+K) → **Add Volume** → mount path **`/data`**.
+   The bot uses the volume automatically (`RAILWAY_VOLUME_MOUNT_PATH`). Without one, every redeploy wipes the
+   database, so "delete previous post" can't find the old post; the bot warns admins about this at startup.
 4. Click **Deploy**. Open **Deployments → View logs**; you should see `Bot started`, and the bot messages you "🤖 Bot started".
 5. In Telegram send `/start` to your bot → set the times for each job → try **🚀 Send now** on each one.
 

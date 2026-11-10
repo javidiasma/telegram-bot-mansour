@@ -37,8 +37,14 @@ async def on_startup(app: Application) -> None:
             ], scope=BotCommandScopeChat(admin))
         except TelegramError:   # admin hasn't started the bot yet
             log.warning("Could not set commands for admin %s", admin)
-    log.info("Bot started; channel=%s admins=%s", cfg.CHANNEL_ID, cfg.ADMIN_IDS)
-    await notify_admins(app, "🤖 ربات روشن شد. برای باز کردن پنل مدیریت /start را بفرستید.")
+    log.info("Bot started; channel=%s admins=%s data=%s", cfg.CHANNEL_ID, cfg.ADMIN_IDS, cfg.DATA_DIR)
+    text = "🤖 ربات روشن شد. برای باز کردن پنل مدیریت /start را بفرستید."
+    if cfg.ON_RAILWAY and not cfg.DATA_ON_VOLUME:
+        log.warning("No Railway volume attached: data in %s is lost on every redeploy", cfg.DATA_DIR)
+        text += ("\n\n⚠️ روی Railway هیچ Volume وصل نیست؛ با هر دیپلوی تنظیمات، آهنگ‌ها و شناسه آخرین پست‌ها پاک "
+                 "می‌شود و «حذف پست قبلی» کار نمی‌کند. در Railway روی سرویس راست‌کلیک کنید ← Add Volume ← "
+                 "مسیر /data را بدهید.")
+    await notify_admins(app, text)
 
 
 async def on_shutdown(app: Application) -> None:

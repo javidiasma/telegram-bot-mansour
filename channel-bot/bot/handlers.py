@@ -431,7 +431,7 @@ async def ai_button(q, context, arg: str) -> None:
 PREVIEW_KB = M([[B("📤 ارسال در کانال", callback_data="ai:post")],
                 [B("✏️ ویرایش", callback_data="ai:edit"), B("🔄 ساخت دوباره", callback_data="ai:retry")],
                 [B("❌ انصراف", callback_data="ai:cancel")]])
-EDIT_UNSUPPORTED = (400, 404, 405, 415, 422, 501)   # provider/model can't edit images → rebuild instead
+EDIT_UNSUPPORTED = (400, 403, 404, 405, 415, 422, 501)   # provider/model can't edit images → rebuild instead
 
 
 async def make_and_preview(chat_id: int, context: ContextTypes.DEFAULT_TYPE, change: str | None = None) -> None:
@@ -457,8 +457,16 @@ async def make_and_preview(chat_id: int, context: ContextTypes.DEFAULT_TYPE, cha
             brief = await imagegen.write_prompt(http, cfg.CHAT_API_BASE_URL, cfg.CHAT_API_KEY, cfg.CHAT_MODEL,
                                                 ai["request"])
             prompt = imagegen.build_poster_prompt(ai["request"], brief, ai.get("edits"))
-            raw = await imagegen.generate_image(http, prompt, cfg.IMAGE_API_BASE_URL, cfg.IMAGE_API_KEY,
-                                                cfg.IMAGE_MODEL, cfg.IMAGE_SIZE, cfg.IMAGE_QUALITY)
+            try:
+                raw = await imagegen.generate_image(http, prompt, cfg.IMAGE_API_BASE_URL, cfg.IMAGE_API_KEY,
+                                                    cfg.IMAGE_MODEL, cfg.IMAGE_SIZE, cfg.IMAGE_QUALITY)
+            except imagegen.ImageError as e:
+                if not cfg.IMAGE_FALLBACK_MODEL or cfg.IMAGE_FALLBACK_MODEL == cfg.IMAGE_MODEL or e.status in (401, 402):
+                    raise
+                log.warning("image model %s failed (%s); trying %s", cfg.IMAGE_MODEL, e, cfg.IMAGE_FALLBACK_MODEL)
+                raw = await imagegen.generate_image(http, prompt, cfg.IMAGE_API_BASE_URL, cfg.IMAGE_API_KEY,
+                                                    cfg.IMAGE_FALLBACK_MODEL, cfg.IMAGE_SIZE, cfg.IMAGE_QUALITY)
+                note += f"\n(با مدل جایگزین {cfg.IMAGE_FALLBACK_MODEL} ساخته شد.)"
         data = imagegen.to_jpeg(raw)
     except Exception as e:  # noqa: BLE001
         log.exception("image generation failed")
@@ -466,7 +474,7 @@ async def make_and_preview(chat_id: int, context: ContextTypes.DEFAULT_TYPE, cha
         if ai.get("file_id"):
             rows.append([B("↩️ برگشت به نسخه قبلی", callback_data="ai:last")])
         rows.append([B("⬅️ منو", callback_data="menu")])
-        await app.bot.send_message(chat_id, f"❌ ساخت تصویر انجام نشد: {e}", reply_markup=M(rows))
+        await app.bot.send_message(chat_id, f"❌ ساخت تصویر انجام نشد: {imagegen.friendly(e)}", reply_markup=M(rows))
         return
     sent = await app.bot.send_photo(chat_id, data, caption="پیش‌نمایش — در کانال ارسال شود؟" + note,
                                     reply_markup=PREVIEW_KB)

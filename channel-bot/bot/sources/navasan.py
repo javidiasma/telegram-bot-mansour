@@ -4,12 +4,15 @@ The navasan.net home page HTML contains placeholder numbers that JavaScript repl
 so we read the daily archive page (dayRates.php?item=usd_sell), which carries the real
 prices in plain HTML. If NAVASAN_API_KEY is set, the official API is used instead.
 """
+import logging
 import re
 from dataclasses import dataclass
 
 from bs4 import BeautifulSoup
 
 from ..persian import to_en
+
+log = logging.getLogger(__name__)
 
 PAGE_URL = "https://www.navasan.net/dayRates.php?item={item}"
 
@@ -108,4 +111,20 @@ async def fetch_rate(client, item: str = "usd_sell", api_key: str = "", api_url:
         )
     r = await client.get(PAGE_URL.format(item=item))
     r.raise_for_status()
-    return parse_day_rates(r.text, item)
+    try:
+        return parse_day_rates(r.text, item)
+    except SourceError as e:
+        raise SourceError(f"{e}\n{describe_page(r)}") from e
+
+
+def describe_page(r) -> str:
+    """Short description of what the site actually returned, so the admin/log shows why parsing failed
+    (a block or challenge page, an empty page, or a real layout change)."""
+    log.warning("navasan page not understood: status=%s url=%s body=%r", r.status_code, r.url, r.text[:1500])
+    soup = BeautifulSoup(r.text, "lxml")
+    title = (soup.title.get_text(strip=True) if soup.title else "")[:80]
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    snippet = " ".join(soup.get_text(" ").split())[:150]
+    return (f"جزئیات پاسخ سایت: کد {r.status_code}، آدرس {r.url}، عنوان «{title or '—'}»، "
+            f"حجم {len(r.text):,} نویسه، شروع متن: «{snippet or '— خالی —'}»")
